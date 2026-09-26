@@ -1,4 +1,5 @@
 const API_BASE = String(window.AMECC_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
+import { readMaterialWorkbook } from './material-import.js';
 const app = document.querySelector('#app');
 const state = { user: null, projects: [], currentProject: '', page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', data: null, loading: false };
 const themes = ['light', 'midnight', 'paper'];
@@ -142,7 +143,7 @@ function projectsPage() {
 function adminPage() {
   return `${heading('ACCESS CONTROL · ADMIN','Quản trị tài khoản & dữ liệu','Tạo tài khoản chỉ xem và nhập dữ liệu thực từ workbook trên máy tính của bạn.')}
     <div class="admin-grid"><section class="panel"><div class="panel-title"><span class="eyebrow">USER ACCESS</span><h3>Tạo tài khoản người xem</h3><p>Tài khoản viewer chỉ có quyền đọc dữ liệu; không thể tải hoặc thay thế dữ liệu.</p></div><form id="viewerForm" class="form-grid"><label>Tên đăng nhập<input name="username" minlength="3" maxlength="64" required></label><label>Mật khẩu tạm (ít nhất 12 ký tự)<input name="password" type="password" minlength="12" required></label><button class="button primary" type="submit">Tạo tài khoản viewer</button><div class="form-message" id="viewerMessage" aria-live="polite"></div></form></section>
-    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>File được gửi riêng tới API bảo mật; workbook gốc không được commit vào GitHub.</p></div><form id="importForm" class="form-grid"><label>Mã dự án<input name="project_code" placeholder="VD: A290" pattern="[A-Za-z0-9_-]{2,32}" required></label><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small>PL cần tên kết thúc bằng PL.xlsx; QLDA cần sheet Progress. Tối đa 10 MB.</small></label><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section></div>
+    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>Vật tư được phân tích trên trình duyệt rồi gửi JSON; QLDA vẫn gửi workbook trực tiếp.</p></div><form id="importForm" class="form-grid"><label>Mã dự án<input name="project_code" placeholder="VD: A290" pattern="[A-Za-z0-9_-]{2,32}" required></label><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small>PL cần tên kết thúc bằng PL.xlsx; QLDA cần sheet Progress. Tối đa 10 MB.</small></label><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section></div>
     <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">PROJECT DATA</span><h3>Các dự án trên hệ thống</h3></div>${state.projects.length ? `<div class="account-list">${state.projects.map((project) => `<div class="account-row"><b>${esc(project.code)}</b><span>${fmt(project.material_rows)} vật tư</span><span>${fmt(project.progress_rows)} tiến độ</span><small>${fmt(project.updated_at)}</small></div>`).join('')}</div>` : '<p class="muted">Chưa nhập workbook nào.</p>'}</section>`;
 }
 function bindPage() {
@@ -160,7 +161,20 @@ function bindPage() {
   document.querySelector('#importForm')?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const output = document.querySelector('#importMessage'); const button = form.querySelector('button');
     const endpoint = data.get('category') === 'materials' ? 'materials' : 'projects'; button.disabled = true; output.textContent = 'Đang kiểm tra cấu trúc và nhập dữ liệu…'; output.className = 'form-message';
-    try { const result = await api(`/api/admin/import/${endpoint}`,{method:'POST',body:data}); output.textContent = `Đã nhập ${result.imported_rows.toLocaleString('vi-VN')} dòng cho dự án ${result.project_code}.`; output.className = 'form-message success-message'; form.reset(); await refreshProjects(); }
+    try {
+      let result;
+      if (endpoint === 'materials') {
+        output.textContent = 'Đang đọc workbook và tạo JSON trên trình duyệt…';
+        const xlsx = window.XLSX;
+        if (!xlsx) throw new Error('Không tải được thư viện đọc Excel; hãy tải lại trang rồi thử lại.');
+        const payload = await readMaterialWorkbook(data.get('file'), data.get('project_code'), xlsx);
+        output.textContent = `Đã phân tích ${payload.records.length.toLocaleString('vi-VN')} dòng; đang tải JSON…`;
+        result = await api(`/api/admin/import/${endpoint}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+      } else {
+        result = await api(`/api/admin/import/${endpoint}`,{method:'POST',body:data});
+      }
+      output.textContent = `Đã nhập ${result.imported_rows.toLocaleString('vi-VN')} dòng cho dự án ${result.project_code}.`; output.className = 'form-message success-message'; form.reset(); await refreshProjects();
+    }
     catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; }
     finally { button.disabled = false; }
   });
