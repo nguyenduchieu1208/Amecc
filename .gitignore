@@ -1,0 +1,9 @@
+﻿Data/
+QLDA/
+__pycache__/
+.env
+.dev.vars
+node_modules/
+.wrangler/
+*.sqlite
+*.db
