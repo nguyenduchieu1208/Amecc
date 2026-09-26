@@ -1,0 +1,19 @@
+name = "amecc-api"
+main = "worker/index.js"
+compatibility_date = "2026-09-26"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "amecc-db"
+database_id = "f611af0f-b526-4649-896c-9cb8ad0abf00"
+migrations_dir = "migrations"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[vars]
+ALLOWED_ORIGIN = "https://nguyenduchieu1208.github.io"
+SESSION_TTL_SECONDS = "28800"
+MAX_UPLOAD_BYTES = "10485760"
