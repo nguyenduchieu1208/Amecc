@@ -6,6 +6,7 @@ import * as xlsx from 'xlsx';
 import { __test__ } from '../worker/index.js';
 import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js';
 import { filterBtpRows, filterMaterialGroups, highlightMatch } from '../public/material-search.js';
+import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(__test__.safeProjectCode(' a290 '), 'A290');
@@ -114,8 +115,25 @@ test('A290 6HH-43 uses the date on its receipt record as the displayed receipt d
   assert.equal(btpRows[0].received, 1);
   assert.equal(btpRows[0].remaining, 0);
   assert.equal(materialRow.delivery_date, '2026-05-21', 'the date recorded on the receipt/issue record is the receipt date');
-  assert.match(app, /Ngày nhận: \$\{fmt\(group\.delivery_date\)\}/);
+  assert.match(app, /Ngày nhận: \$\{fmt\(receiptDate\)\}/);
+  assert.match(app, /getMaterialReceiptDate\(group\)/);
   assert.doesNotMatch(app, /Ngày phát hành:/);
+});
+
+test('material receipt dates fall back to child rows and display as Vietnamese dates', () => {
+  const group = {
+    delivery_date:null,
+    children:[
+      { delivery_date:'2026-09-26' },
+      { delivery_date:'2026-09-29, 2026-09-26' },
+      { delivery_date:null },
+    ],
+  };
+  const receiptDates = getMaterialReceiptDate(group);
+  assert.equal(receiptDates, '2026-09-26, 2026-09-29');
+  assert.equal(formatMaterialDate(receiptDates), '26/09/2026, 29/09/2026');
+  assert.equal(formatMaterialDate('not-a-date'), 'not-a-date');
+  assert.equal(getMaterialReceiptDate({ delivery_date:'2026-09-29', children:[] }), '2026-09-29');
 });
 
 test('browser PL parser emits only approved import fields and preserves grouping', () => {
@@ -236,6 +254,15 @@ test('actual A290 workbook parses to a compact approved-field JSON payload', { s
   assert.ok(payload.btp_records.every((row) => !Object.hasOwn(row, 'issue_date') && !Object.hasOwn(row, 'date_issue')));
   assert.ok(Buffer.byteLength(JSON.stringify(payload)) < 10 * 1024 * 1024);
   assert.equal(Object.hasOwn(payload.records[0], 'project_code'), false);
+});
+
+test('actual A320 workbook preserves the receipt date for SDM_A5C_1-1A_P4', { skip: !existsSync('Data/A320PL.xlsx') }, async () => {
+  const { readFileSync } = await import('node:fs');
+  const workbook = xlsx.read(readFileSync('Data/A320PL.xlsx'), { type:'buffer', cellDates:true, bookVBA:false });
+  const payload = parseMaterialWorkbook(workbook, 'A320PL.xlsx', 'A320', xlsx);
+  const receiptRow = payload.records.find((row) => row.source_sheet === 'A320M4130' && row.source_row === 211);
+  assert.equal(receiptRow?.part_no, 'P4');
+  assert.equal(receiptRow?.delivery_date, '2026-08-07');
 });
 
 test('real source workbooks are kept outside Git and ignored', { skip: !existsSync('Data/A290PL.xlsx') || !existsSync('QLDA/A290.xlsx') }, () => {
