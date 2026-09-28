@@ -37,7 +37,7 @@ const BTP_HEADER_ALIASES = {
 };
 
 function normalizeHeader(value) {
-  return typeof value === 'string' ? value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+  return typeof value === 'string' ? value.replace(/[đĐ]/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '') : '';
 }
 
 function findMaterialHeader(header, aliases) {
@@ -64,19 +64,23 @@ function materialColumns(header) {
     if (!Object.values(columns).includes(field) && !columns[column]) columns[column] = field;
   }
   const deliveryDate = findMaterialHeader(header, ['ngaygiao', 'ngaygiaohang', 'deliverydate', 'dateofdelivery']);
-  const issueDates = header.flatMap((value, index) => {
+  const receiptDates = header.flatMap((value, index) => {
     const normalized = normalizeHeader(value);
     return normalized.startsWith('dateissue') || normalized.startsWith('issuedate') || normalized.startsWith('dateissued')
       ? [index + 1] : [];
   });
-  return { columns, scopeColumns, deliveryDate, issueDates };
+  return { columns, scopeColumns, deliveryDate, receiptDates };
 }
 
 function btpColumns(header) {
   const columns = {};
+  const mappedFields = new Set();
   for (const [field, aliases] of Object.entries(BTP_HEADER_ALIASES)) {
     const column = findMaterialHeader(header, aliases);
-    if (column) columns[column] = field;
+    if (column && !mappedFields.has(field)) {
+      columns[column] = field;
+      mappedFields.add(field);
+    }
   }
   return columns;
 }
@@ -116,7 +120,11 @@ function parseBtpSheet(sheetName, rows, xlsx) {
   const headerIndex = btpHeaderIndex(rows);
   if (headerIndex === -1) return [];
   const columns = btpColumns(rows[headerIndex]);
+  const remainingColumn = Number(Object.keys(columns).find((column) => columns[column] === 'remaining'));
+  const jointCheckColumn = Number(Object.keys(columns).find((column) => columns[column] === 'joint_check'));
   const dateColumns = rows[headerIndex].flatMap((value, index) => {
+    const column = index + 1;
+    if (!remainingColumn || !jointCheckColumn || column <= remainingColumn || column >= jointCheckColumn) return [];
     const date = btpDateHeader(value, xlsx);
     return date ? [{ column: index, date }] : [];
   });
@@ -130,10 +138,11 @@ function parseBtpSheet(sheetName, rows, xlsx) {
     if (!fields.part_no) continue;
     for (const field of ['length_mm', 'design_quantity', 'received', 'remaining']) fields[field] = btpNumeric(fields[field]);
     if (dateColumns.length) {
-      fields.daily_progress = dateColumns
+      const dailyProgress = dateColumns
         .filter(({ column }) => raw[column] !== null && raw[column] !== undefined && raw[column] !== '')
         .map(({ date, column }) => `${date}: ${normalizeValue(raw[column])}`)
-        .join('; ') || null;
+        .join('; ');
+      if (dailyProgress) fields.daily_progress = dailyProgress;
     }
     if (fields.status == null && fields.remaining != null) fields.status = fields.remaining === 0 ? 'Đủ' : 'Còn thiếu';
     rowsOut.push({ source_sheet: sheetName, source_row: rowIndex + 1, ...fields });
@@ -229,7 +238,10 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
       fields.part_no = normalizePartNumber(workbook.Sheets[sheetName], rowIndex, raw[4], xlsx);
       fields.scope = sourceColumns.scopeColumns.map((column) => normalizeValue(raw[column - 1])).find(Boolean) ?? fields.scope ?? null;
       fields.delivery_date = sourceColumns.deliveryDate ? normalizeMaterialDate(raw[sourceColumns.deliveryDate - 1], xlsx) : null;
-      fields.issue_dates = sortedIssueDates(raw, sourceColumns.issueDates, xlsx);
+      const receiptDates = sortedIssueDates(raw, sourceColumns.receiptDates, xlsx);
+      fields.delivery_date = receiptDates || (sourceColumns.deliveryDate
+        ? normalizeMaterialDate(raw[sourceColumns.deliveryDate - 1], xlsx)
+        : null);
       if (![fields.drawing, fields.assembly, fields.part_no, fields.description]
         .some((item) => item !== null && item !== undefined)) continue;
       if (typeof fields.drawing === 'number') continue;

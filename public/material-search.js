@@ -15,6 +15,16 @@ export function filterMaterialGroups(groups, search) {
   return { matching, other };
 }
 
+export function filterBtpRows(rows, sheetName, search) {
+  const selectedSheet = String(sheetName ?? '').trim().toLocaleLowerCase();
+  const query = String(search ?? '').trim().toLocaleLowerCase();
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    if (selectedSheet && String(row?.source_sheet ?? '').toLocaleLowerCase() !== selectedSheet) return false;
+    return !query || ['part_no', 'material_type', 'unit', 'size', 'length_mm', 'design_quantity', 'received', 'remaining', 'daily_progress', 'joint_check', 'status', 'note']
+      .some((field) => String(row?.[field] ?? '').toLocaleLowerCase().includes(query));
+  });
+}
+
 export function highlightMatch(value, search) {
   const text = value === null || value === undefined || value === '' ? '—' : String(value);
   const query = String(search ?? '').trim();

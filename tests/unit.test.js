@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import * as xlsx from 'xlsx';
 import { __test__ } from '../worker/index.js';
 import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js';
-import { filterMaterialGroups, highlightMatch } from '../public/material-search.js';
+import { filterBtpRows, filterMaterialGroups, highlightMatch } from '../public/material-search.js';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(__test__.safeProjectCode(' a290 '), 'A290');
@@ -74,6 +74,50 @@ test('material search matches child component rows and separates unrelated group
   assert.match(highlightMatch('BRACKET [A]', '['), /<mark class="search-highlight">\[<\/mark>/);
 });
 
+test('BTP filters by source sheet and combines sheet selection with text search', () => {
+  const rows = [
+    { source_sheet:'T5P1', part_no:'BTP-001', material_type:'Shape' },
+    { source_sheet:'T5P1', part_no:'BTP-002', material_type:'Plate' },
+    { source_sheet:'T5P2', part_no:'BTP-003', material_type:'Shape' },
+  ];
+  assert.deepEqual(filterBtpRows(rows, 't5p1', ''), rows.slice(0, 2));
+  assert.deepEqual(filterBtpRows(rows, 'T5P1', 'plate'), [rows[1]]);
+  assert.deepEqual(filterBtpRows(rows, '', 'shape'), [rows[0], rows[2]]);
+});
+
+test('material and BTP views keep only requested columns and place sheet/theme controls accessibly', async () => {
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync('public/app.js', 'utf8');
+  const materialColumns = app.match(/const materialColumns = \[([^\]]+)\]/)?.[1]
+    .split(',').map((column) => column.trim().replace(/^['"]|['"]$/g, ''));
+  assert.ok(materialColumns, 'PL material columns must be defined');
+  for (const hidden of ['source_sheet', 'source_row', 'scope', 'as_symbol', 'issue_dates']) {
+    assert.equal(materialColumns.includes(hidden), false, `${hidden} must not be displayed in the PL table`);
+  }
+  assert.ok(materialColumns.includes('delivery_date'), 'PL table keeps the recognized delivery date');
+  assert.match(app, /class="sidebar-settings"[\s\S]*?id="themeSelect"/);
+  assert.match(app, /id="sidebarCollapse"/);
+  assert.match(app, /class="btp-filter-stack"[\s\S]*?id="btpSheetFilter"[\s\S]*?id="btpSearch"/);
+  assert.match(app, /localeCompare\(String\(right\.code\), 'vi', \{ numeric:true, sensitivity:'base' \}\)/);
+  assert.match(app, /\[\.\.\.state\.projects\]\.sort\(\(left, right\) => String\(left\.code\)\.localeCompare\(String\(right\.code\)/);
+});
+
+test('A290 6HH-43 uses the date on its receipt record as the displayed receipt date', async () => {
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync('public/app.js', 'utf8');
+  const materialRow = {
+    source_sheet:'A290ELE', part_no:'6HH-43', received:1, delivery_date:'2026-05-21',
+  };
+  const btpRows = [{ source_sheet:'BTP-A290ELE', part_no:'6-B-60001-6HH-43', received:1, remaining:0, daily_progress:'14/07: 1' }];
+  assert.equal(materialRow.part_no, '6HH-43');
+  assert.equal(btpRows[0].part_no, '6-B-60001-6HH-43');
+  assert.equal(btpRows[0].received, 1);
+  assert.equal(btpRows[0].remaining, 0);
+  assert.equal(materialRow.delivery_date, '2026-05-21', 'the date recorded on the receipt/issue record is the receipt date');
+  assert.match(app, /Ngày nhận: \$\{fmt\(group\.delivery_date\)\}/);
+  assert.doesNotMatch(app, /Ngày phát hành:/);
+});
+
 test('browser PL parser emits only approved import fields and preserves grouping', () => {
   const header = [];
   for (const [column, value] of [[2,'Drawing Number'],[3,'Assembly No.'],[4,'Description'],[5,'Part No.'],[7,'Size'],[12,"T.Q'ty"],[14,'T.Weight'],[15,'Scope'],[20,'Received'],[21,'Remaining'],[28,'AS Symbol']]) header[column - 1] = value;
@@ -100,23 +144,23 @@ test('browser PL parser emits only approved import fields and preserves grouping
   assert.equal(Object.hasOwn(payload.records[1], 'filename'), false);
 });
 
-test('BTP parser recognizes workbook detail headers and emits only selected BTP data fields', () => {
-  const headers = ['Chủng loại','Part No.1','Size','Description','Length','Material',"T.Q'ty",'U.Weight','T.Weight','Đã nhận','SL Nhận','Còn thiếu','21/07','Ktra nối','Lấy data','KO BB','Tôn','Cảnh báo thừa','DVG','MPR No','Qty MPR','Cutting No.','Qty Cutting','Date Issue'];
-  const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,2.4,4.8,1,1,1,3,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026'];
-  const workbook = { SheetNames:['BTP-PL-1'], Sheets:{ 'BTP-PL-1':{} } };
+test('BTP parser recognizes detail headers, keeps dated progress, and excludes issue date fields', () => {
+  const headers = ['Chủng loại','Part No.1','Size','Description','Length','Material',"T.Q'ty",'U.Weight','T.Weight','Đã nhận','SL Nhận','Còn thiếu',new Date('2026-07-21T00:00:00Z'),'Ktra nối','Lấy data','KO BB','Tôn','Cảnh báo thừa','DVG','MPR No','Qty MPR','Cutting No.','Qty Cutting',new Date('2026-07-23T00:00:00Z'),'Ghi Chú'];
+  const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,2.4,4.8,0,1,1,3,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026','Kiểm tra ghi chú'];
+  const workbook = { SheetNames:['BTP-A290T1P1'], Sheets:{ 'BTP-A290T1P1':{} } };
   const parser = { utils:{ sheet_to_json:() => [...Array.from({length:25}, () => []), headers, detail] } };
   const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
   assert.equal(payload.records.length, 0);
   assert.deepEqual(BTP_COLUMNS, ['part_no','material_type','unit','size','length_mm','design_quantity','received','remaining','daily_progress','joint_check','status','note']);
   assert.equal(payload.btp_records.length, 1);
   assert.deepEqual(payload.btp_records[0], {
-    source_sheet:'BTP-PL-1', source_row:27, part_no:'BTP-001', material_type:'Shape', size:'L-75X75X6', length_mm:350,
-    design_quantity:2, received:1, remaining:1, daily_progress:'21/07: 3', joint_check:'✓', unit:'MCC', status:'Còn thiếu', note:null,
+    source_sheet:'BTP-A290T1P1', source_row:27, part_no:'BTP-001', material_type:'Shape', size:'L-75X75X6', length_mm:350,
+    design_quantity:2, received:0, remaining:1, daily_progress:'21/07/2026: 3', joint_check:'✓', unit:'MCC', status:'Còn thiếu', note:'Kiểm tra ghi chú',
   });
-  assert.equal(Object.keys(payload.btp_records[0]).some((field) => ['description','material','weight','MPR No','Cutting No.'].includes(field)), false);
+  assert.equal(Object.keys(payload.btp_records[0]).some((field) => ['description','material','weight','issue_date','date_issue','MPR No','Cutting No.'].includes(field)), false);
 });
 
-test('PL parser detects shifted headers and normalizes, sorts, and deduplicates dates', () => {
+test('PL parser detects shifted headers and maps receipt record dates, normalizing duplicates', () => {
   const workbook = { SheetNames:['PL-1'], Sheets:{ 'PL-1':{} } };
   const header = ['Drawing No.', 'Assembly Number', 'Description', 'Part Number', 'Size', "T.Q'ty", 'T.Weight',
     'Scope of Painting Work', 'Delivery Date', 'Date Issue 3', 'Scope of Steel Work', 'Date Issue 1', 'Date Issue 2', 'Date Issue 4', 'AS Symbol'];
@@ -128,23 +172,21 @@ test('PL parser detects shifted headers and normalizes, sorts, and deduplicates 
   const { records } = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
   assert.equal(records.length, 1);
   assert.equal(records[0].scope, 'steel');
-  assert.equal(records[0].delivery_date, '2024-03-01');
-  assert.equal(records[0].issue_dates, '2024-01-02, 2024-02-01, 2024-03-04');
+  assert.equal(records[0].delivery_date, '2024-01-02, 2024-02-01, 2024-03-04');
+  assert.equal(Object.hasOwn(records[0], 'issue_dates'), false);
 });
 
-test('PL parser leaves blank and invalid dates empty without mistaking Date Issue for delivery', () => {
+test('PL parser ignores invalid receipt record dates and falls back to the delivery-date field', () => {
   const workbook = { SheetNames:['PL-1'], Sheets:{ 'PL-1':{} } };
   const header = ['Drawing Number', 'Description', 'Part No.', 'Scope of Work', 'Date Issue 1', 'Ngày giao', 'AS Symbol'];
-  const row = ['DWG-1', 'Main', 'P-1', 'steel', '31/02/2024', 'not a date', 'x'];
+  const row = ['DWG-1', 'Main', 'P-1', 'steel', '31/02/2024', '15/04/2024', 'x'];
   const parser = { utils:{ sheet_to_json:() => [...Array.from({length:5}, () => []), header, row] } };
   const { records } = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
-  assert.equal(records[0].delivery_date, null);
-  assert.equal(records[0].issue_dates, null);
+  assert.equal(records[0].delivery_date, '2024-04-15');
   const blank = parseMaterialWorkbook({ SheetNames:['PL-1'], Sheets:{ 'PL-1':{} } }, 'A290PL.xlsx', 'A290', {
     utils:{ sheet_to_json:() => [...Array.from({length:5}, () => []), header, ['DWG-2', 'Main', 'P-2', 'steel', null, null, 'x']] },
   });
   assert.equal(blank.records[0].delivery_date, null);
-  assert.equal(blank.records[0].issue_dates, null);
 });
 
 test('JSON import validator rejects invalid rows before any database operation', () => {
@@ -187,6 +229,11 @@ test('actual A290 workbook parses to a compact approved-field JSON payload', { s
   assert.equal(payload.records.length, 12698);
   assert.ok(payload.btp_records.length > 10000);
   assert.ok(payload.records.some((row) => row.is_main === 1));
+  const receiptRecord = payload.records.find((row) => row.part_no === '6HH-43');
+  assert.equal(receiptRecord?.received, 1);
+  assert.equal(receiptRecord?.delivery_date, '2026-05-21');
+  assert.equal(Object.hasOwn(receiptRecord || {}, 'issue_dates'), false);
+  assert.ok(payload.btp_records.every((row) => !Object.hasOwn(row, 'issue_date') && !Object.hasOwn(row, 'date_issue')));
   assert.ok(Buffer.byteLength(JSON.stringify(payload)) < 10 * 1024 * 1024);
   assert.equal(Object.hasOwn(payload.records[0], 'project_code'), false);
 });

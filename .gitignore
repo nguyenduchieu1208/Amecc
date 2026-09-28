@@ -7,3 +7,10 @@ node_modules/
 .wrangler/
 *.sqlite
 *.db
+
+# Local test and diagnostic output
+*.log
+*.err
+migrate-log.txt
+migration-check.txt
+unit-log.txt
