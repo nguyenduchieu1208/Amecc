@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import * as xlsx from 'xlsx';
 import { __test__ } from '../worker/index.js';
 import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js';
-import { filterBtpRows, filterMaterialGroups, highlightMatch } from '../public/material-search.js';
+import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, highlightMatch } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
@@ -86,19 +86,37 @@ test('BTP filters by source sheet and combines sheet selection with text search'
   assert.deepEqual(filterBtpRows(rows, '', 'shape'), [rows[0], rows[2]]);
 });
 
-test('material and BTP views keep only requested columns and place sheet/theme controls accessibly', async () => {
+test('material sheet filter scopes rows to the selected workbook and sheet', () => {
+  const rows = [
+    { source_file:'A290PL.xlsx', source_sheet:'PL-1', source_row:1 },
+    { source_file:'A290PL.xlsx', source_sheet:'PL-2', source_row:2 },
+    { source_file:'B272PL.xlsx', source_sheet:'PL-1', source_row:3 },
+  ];
+  const selected = JSON.stringify(['A290PL.xlsx', 'PL-1']);
+  assert.deepEqual(filterMaterialRowsBySheet(rows, selected), [rows[0]]);
+  assert.deepEqual(filterMaterialRowsBySheet(rows, ''), rows);
+  assert.deepEqual(filterMaterialRowsBySheet(rows, 'invalid'), []);
+});
+
+test('PL materials page has per-sheet detail filters and no separate BTP detail page', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync('public/app.js', 'utf8');
+  const styles = readFileSync('public/styles.css', 'utf8');
   const materialColumns = app.match(/const materialColumns = \[([^\]]+)\]/)?.[1]
     .split(',').map((column) => column.trim().replace(/^['"]|['"]$/g, ''));
   assert.ok(materialColumns, 'PL material columns must be defined');
-  for (const hidden of ['source_sheet', 'source_row', 'scope', 'as_symbol', 'issue_dates']) {
+  for (const hidden of ['assembly', 'source_sheet', 'source_row', 'scope', 'as_symbol', 'issue_dates']) {
     assert.equal(materialColumns.includes(hidden), false, `${hidden} must not be displayed in the PL table`);
   }
   assert.ok(materialColumns.includes('delivery_date'), 'PL table keeps the recognized delivery date');
   assert.match(app, /class="sidebar-settings"[\s\S]*?id="themeSelect"/);
   assert.match(app, /id="sidebarCollapse"/);
-  assert.match(app, /class="btp-filter-stack"[\s\S]*?id="btpSheetFilter"[\s\S]*?id="btpSearch"/);
+  assert.match(styles, /@media\(max-width:820px\)\{\.shell\.sidebar-collapsed \.sidebar\{width:min\(290px,86vw\);min-width:min\(290px,86vw\)/);
+  assert.match(styles, /\.shell\.sidebar-collapsed \.main-area\{margin-left:0\}/);
+  assert.match(styles, /@media\(min-width:821px\)\{\.shell\.sidebar-collapsed \.nav-group\.expanded \.nav-children\{display:none\}\}/);
+  assert.match(app, /class="material-filter-stack"[\s\S]*?id="materialSheetFilter"[\s\S]*?id="materialSearch"/);
+  assert.match(app, /Toàn bộ file \(\$\{sheetOptions\.length\} sheet\)/);
+  assert.doesNotMatch(app, /function btpPage\(|Chi tiết BTP|href="#btp"/);
   assert.match(app, /localeCompare\(String\(right\.code\), 'vi', \{ numeric:true, sensitivity:'base' \}\)/);
   assert.match(app, /\[\.\.\.state\.projects\]\.sort\(\(left, right\) => String\(left\.code\)\.localeCompare\(String\(right\.code\)/);
 });

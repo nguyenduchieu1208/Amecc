@@ -15,6 +15,20 @@ export function filterMaterialGroups(groups, search) {
   return { matching, other };
 }
 
+export function filterMaterialRowsBySheet(rows, sheetFilter) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  if (!sheetFilter) return sourceRows;
+  let selected;
+  try {
+    selected = JSON.parse(sheetFilter);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(selected) || selected.length !== 2) return [];
+  const [sourceFile, sourceSheet] = selected;
+  return sourceRows.filter((row) => row?.source_file === sourceFile && row?.source_sheet === sourceSheet);
+}
+
 export function filterBtpRows(rows, sheetName, search) {
   const selectedSheet = String(sheetName ?? '').trim().toLocaleLowerCase();
   const query = String(search ?? '').trim().toLocaleLowerCase();
