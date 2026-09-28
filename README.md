@@ -2,14 +2,14 @@
 
 Ứng dụng quản lý vật tư từ workbook PL và tiến độ từ workbook QLDA. Frontend là static site phù hợp với GitHub Pages; API, đăng nhập/phân quyền và cơ sở dữ liệu chạy trên Cloudflare Worker + D1.
 
-> **Dữ liệu thật không thuộc repository.** Thư mục `Data/` và `QLDA/` vẫn được giữ trên máy và bị ignore. Excel chỉ được tải từ trình duyệt admin lên API bảo mật; workbook gốc không được commit, đưa lên GitHub Pages hay công khai thành JSON. D1 chỉ lưu những trường được ứng dụng cho phép.
+> **Dữ liệu thật không thuộc repository.** Thư mục `Data/` và `QLDA/` vẫn được giữ trên máy và bị ignore. Excel được đọc trong trình duyệt admin; chỉ các trường được ứng dụng cho phép mới được gửi qua HTTPS lên API. Workbook gốc và JSON tạm không được commit, đưa lên GitHub Pages hay lưu trên Worker. D1 chỉ lưu những trường được ứng dụng cho phép.
 
 ## Chạy giao diện
 
 1. Cài Node.js 20+.
 2. Cài thư viện: `npm install`.
 3. Tạo database Cloudflare D1 và lấy database ID; cập nhật `database_id` trong `wrangler.toml`.
-4. Chạy migration local: `npm run db:migrate:local`.
+4. Chạy migration local: `npm run db:migrate:local` (bao gồm `0004_btp_materials.sql`).
 5. Deploy Worker và cấu hình CORS/API:
 
    ```powershell
@@ -21,7 +21,7 @@
    Đặt `ADMIN_SETUP_KEY` bằng một chuỗi ngẫu nhiên mạnh (không commit). Sau khi Worker deploy, sửa `public/config.js`, thay `https://REPLACE_WITH_YOUR_WORKER.workers.dev` bằng URL Worker thật.
 
 6. Tạo project GitHub Pages tên `Amecc` cho tài khoản `nguyenduchieu1208`, sau đó bật Pages với source **GitHub Actions**. Workflow trong `.github/workflows/pages.yml` deploy nội dung `public/`.
-7. Mở `https://nguyenduchieu1208.github.io/Amecc/`; endpoint Worker trong `wrangler.toml` phải cho phép đúng **origin** URL Pages (origin chỉ gồm scheme + host, không path). `public/config.js` là cấu hình public, không chứa secret.
+7. Mở `https://nguyenduchieu1208.github.io/Amecc/` để xem dữ liệu dự án công khai; trang này không yêu cầu đăng nhập. Trang quản trị riêng tại `https://nguyenduchieu1208.github.io/Amecc/admin.html` yêu cầu tài khoản admin để đăng nhập, nhập workbook và xóa file. Endpoint Worker trong `wrangler.toml` phải cho phép đúng **origin** URL Pages (origin chỉ gồm scheme + host, không path). `public/config.js` là cấu hình public, không chứa secret.
 8. Khởi tạo admin đúng một lần bằng request HTTPS:
 
    ```powershell
@@ -33,11 +33,12 @@
 
 ## Upload workbook nguồn
 
-- Đăng nhập bằng admin, mở **Quản trị tài khoản & dữ liệu**, chọn mã dự án và tải từng workbook.
-- **PL:** `.xlsx`, tên file kết thúc bằng `PL.xlsx`, ví dụ `A290PL.xlsx`. Bộ đọc dò từng sheet, tìm header `AS Symbol` hoặc `Symbol`, bỏ qua `Cover`, sheet bắt đầu `BTP` và sheet `backup`. Lấy Drawing Number, Assembly No., Description, Part No., Size, T.Q'ty, T.Weight, Scope of Steel Work, đã nhận/còn thiếu. Marker `x`/`×`/✓ tạo cấu kiện chính; các dòng sau thuộc cấu kiện gần nhất trong cùng sheet. Hàng đầu của upload cho dự án thay thế bộ dữ liệu PL cũ của chính dự án đó.
+- Không cần đăng nhập để xem danh sách dự án, PL, BTP và tiến độ QLDA tại trang chính. Đăng nhập tại `/admin.html` chỉ khi cần cập nhật workbook, tạo viewer hoặc quản trị file.
+- Admin mở trang `/admin.html` để nhập workbook và xem danh sách file PL/BTP đang lưu theo dự án. Có thể xóa từng file trước khi tải file khác vào; thao tác xóa gỡ cả dữ liệu PL và BTP cùng tên file nhưng không ảnh hưởng workbook QLDA hoặc file PL khác.
+- **PL/BTP:** `.xlsx`, tên file kết thúc bằng `PL.xlsx`, ví dụ `A290PL.xlsx`. Bộ đọc nhận diện sheet PL qua header `AS Symbol`/`Symbol` và các sheet `BTP*` qua header chi tiết `Part No.1` (hoặc alias mã chi tiết), lưu hai tập riêng. Trang **Chi tiết BTP** chỉ hiển thị 12 cột đã chọn: Mã BTP (Chi tiết), Chủng Loại, DVG, Quy Cách (Size), Chiều Dài (mm), SL Thiết Kế, Đã Nhận, Còn Thiếu, Tiến Độ Theo Ngày, Ktra Nối, Trạng Thái, Ghi Chú. Các cột ngày trên header BTP được gộp thành Tiến Độ Theo Ngày; `Ktra nối` và `DVG` được map vào đúng trường. Ngày giao PL được nhận diện riêng theo header `Ngày giao`/`Delivery Date`; các cột `Date Issue` lưu riêng. `Delivery item` không được coi là ngày giao khi chưa xác nhận ý nghĩa. Marker `x`/`×`/✓ tạo cấu kiện chính; các dòng sau thuộc cấu kiện gần nhất trong cùng sheet. Upload PL/BTP được gửi thành các phần 100 dòng vào staging; chỉ khi đã đủ và kiểm tra toàn bộ, transaction thay dữ liệu theo file/loại dữ liệu và ghi lịch sử import. Upload lỗi trước commit không thay dữ liệu hiện hành. Phiên nhập hết hạn sau một giờ.
 - **QLDA:** `.xlsx`, bắt buộc sheet `Progress`; header hàng 3, dữ liệu hàng 4 trở đi. Chỉ các cột B, E–S, AJ–AR và AT–BA được lưu. A, C–D, T–AI, AS, BB trở đi (kể cả AG–AI) và mọi trường không cho phép không được lưu/gửi ra API. Hàng đầu của upload thay thế bộ dữ liệu QLDA cũ của dự án.
-- Mỗi workbook tối đa 10 MB. File gốc chỉ đi qua HTTPS trong lúc upload; không lưu trên Worker, GitHub, R2 hay D1.
-- Tài khoản viewer chỉ được xem. Admin có thể tạo viewer trong giao diện. Có thể tạo user qua script, password được nhập qua biến môi trường, ví dụ:
+- Mỗi workbook tối đa 10 MB. Với PL, trình duyệt phân tích XLSX và chỉ gửi JSON các trường được phép; QLDA tiếp tục gửi workbook qua HTTPS để Worker phân tích. File gốc và JSON tạm không lưu trên Worker, GitHub, R2 hay D1.
+- Dữ liệu đọc qua giao diện/API dự án là công khai, không yêu cầu đăng nhập. Các thao tác tạo tài khoản, nhập workbook và xóa file vẫn yêu cầu admin; tài khoản viewer chỉ có quyền đọc. Admin có thể tạo viewer trong giao diện. Có thể tạo user qua script, password được nhập qua biến môi trường, ví dụ:
 
   ```powershell
   $env:AMECC_USER_PASSWORD = "mat-khau-nguoi-dung-rat-manh"

@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import * as xlsx from 'xlsx';
 import { __test__ } from '../worker/index.js';
+import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js';
+import { filterMaterialGroups, highlightMatch } from '../public/material-search.js';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(__test__.safeProjectCode(' a290 '), 'A290');
@@ -56,6 +59,136 @@ test('material mapping follows PL workbook source columns', () => {
   assert.equal(__test__.MATERIAL_FIELDS[12], 'quantity');
   assert.equal(__test__.MATERIAL_FIELDS[15], 'scope');
   assert.equal(__test__.MATERIAL_FIELDS[21], 'remaining');
+});
+
+test('material search matches child component rows and separates unrelated groups', () => {
+  const groups = [
+    { assembly:'Frame A', drawing:'DWG-A', children:[{ part_no:'BOLT-123', description:'Bolt' }] },
+    { assembly:'Frame B', drawing:'DWG-B', children:[{ part_no:'NUT-2', description:'Nut' }] },
+  ];
+  const result = filterMaterialGroups(groups, 'bolt-123');
+  assert.deepEqual(result.matching, [groups[0]]);
+  assert.deepEqual(result.other, [groups[1]]);
+  assert.match(highlightMatch('<Frame> Bolt-123', 'bolt-123'), /&lt;Frame&gt; <mark class="search-highlight">Bolt-123<\/mark>/);
+  assert.doesNotMatch(highlightMatch('<script>', ''), /<script>/);
+  assert.match(highlightMatch('BRACKET [A]', '['), /<mark class="search-highlight">\[<\/mark>/);
+});
+
+test('browser PL parser emits only approved import fields and preserves grouping', () => {
+  const header = [];
+  for (const [column, value] of [[2,'Drawing Number'],[3,'Assembly No.'],[4,'Description'],[5,'Part No.'],[7,'Size'],[12,"T.Q'ty"],[14,'T.Weight'],[15,'Scope'],[20,'Received'],[21,'Remaining'],[28,'AS Symbol']]) header[column - 1] = value;
+  const main = [];
+  for (const [column, value] of [[2,'DWG-1'],[3,'ASM-1'],[4,'Main assembly'],[12,10],[20,4],[21,6],[28,'x']]) main[column - 1] = value;
+  const component = [];
+  for (const [column, value] of [[2,'DWG-2'],[4,'Component'],[5,'P-2'],[7,'M20'],[12,4],[14,12],[20,2],[21,2]]) component[column - 1] = value;
+  component[4] = 12;
+  const workbook = { SheetNames:['Cover','PL-1','BTP-PL-2'], Sheets:{ Cover:{}, 'PL-1':{}, 'BTP-PL-2':{} } };
+  const parser = { utils:{ sheet_to_json:(sheet) => sheet === workbook.Sheets['PL-1']
+    ? [...Array.from({length:7}, () => []), header, main, component] : [],
+    encode_cell:({r,c}) => `${r}:${c}`,
+    format_cell:(cell) => cell.z === '00000' ? String(cell.v).padStart(5,'0') : String(cell.v),
+  } };
+  workbook.Sheets['PL-1']['9:4'] = { v:12, z:'00000' };
+  const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
+  assert.equal(payload.records.length, 2);
+  assert.equal(payload.records[0].is_main, 1);
+  assert.equal(payload.records[1].parent, 'ASM-1');
+  assert.equal(payload.records[1].part_no, '00012');
+  assert.equal(payload.records[1].status, 'chưa đủ');
+  assert.equal(payload.records[1].source_sheet, 'PL-1');
+  assert.equal(Object.hasOwn(payload.records[1], 'project_code'), false);
+  assert.equal(Object.hasOwn(payload.records[1], 'filename'), false);
+});
+
+test('BTP parser recognizes workbook detail headers and emits only selected BTP data fields', () => {
+  const headers = ['Chủng loại','Part No.1','Size','Description','Length','Material',"T.Q'ty",'U.Weight','T.Weight','Đã nhận','SL Nhận','Còn thiếu','21/07','Ktra nối','Lấy data','KO BB','Tôn','Cảnh báo thừa','DVG','MPR No','Qty MPR','Cutting No.','Qty Cutting','Date Issue'];
+  const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,2.4,4.8,1,1,1,3,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026'];
+  const workbook = { SheetNames:['BTP-PL-1'], Sheets:{ 'BTP-PL-1':{} } };
+  const parser = { utils:{ sheet_to_json:() => [...Array.from({length:25}, () => []), headers, detail] } };
+  const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
+  assert.equal(payload.records.length, 0);
+  assert.deepEqual(BTP_COLUMNS, ['part_no','material_type','unit','size','length_mm','design_quantity','received','remaining','daily_progress','joint_check','status','note']);
+  assert.equal(payload.btp_records.length, 1);
+  assert.deepEqual(payload.btp_records[0], {
+    source_sheet:'BTP-PL-1', source_row:27, part_no:'BTP-001', material_type:'Shape', size:'L-75X75X6', length_mm:350,
+    design_quantity:2, received:1, remaining:1, daily_progress:'21/07: 3', joint_check:'✓', unit:'MCC', status:'Còn thiếu', note:null,
+  });
+  assert.equal(Object.keys(payload.btp_records[0]).some((field) => ['description','material','weight','MPR No','Cutting No.'].includes(field)), false);
+});
+
+test('PL parser detects shifted headers and normalizes, sorts, and deduplicates dates', () => {
+  const workbook = { SheetNames:['PL-1'], Sheets:{ 'PL-1':{} } };
+  const header = ['Drawing No.', 'Assembly Number', 'Description', 'Part Number', 'Size', "T.Q'ty", 'T.Weight',
+    'Scope of Painting Work', 'Delivery Date', 'Date Issue 3', 'Scope of Steel Work', 'Date Issue 1', 'Date Issue 2', 'Date Issue 4', 'AS Symbol'];
+  const main = ['DWG-1', 'ASM-1', 'Main', 'P-1', 'M20', 1, 10, 'paint', 45352, '04/03/2024', 'steel', '2024-01-02', '2024-01-02', new Date('2024-02-01T00:00:00Z'), 'x'];
+  const parser = {
+    utils:{ sheet_to_json:() => [...Array.from({length:5}, () => []), header, main] },
+    SSF:{ parse_date_code:(value) => value === 45352 ? { y:2024, m:3, d:1 } : null },
+  };
+  const { records } = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].scope, 'steel');
+  assert.equal(records[0].delivery_date, '2024-03-01');
+  assert.equal(records[0].issue_dates, '2024-01-02, 2024-02-01, 2024-03-04');
+});
+
+test('PL parser leaves blank and invalid dates empty without mistaking Date Issue for delivery', () => {
+  const workbook = { SheetNames:['PL-1'], Sheets:{ 'PL-1':{} } };
+  const header = ['Drawing Number', 'Description', 'Part No.', 'Scope of Work', 'Date Issue 1', 'Ngày giao', 'AS Symbol'];
+  const row = ['DWG-1', 'Main', 'P-1', 'steel', '31/02/2024', 'not a date', 'x'];
+  const parser = { utils:{ sheet_to_json:() => [...Array.from({length:5}, () => []), header, row] } };
+  const { records } = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
+  assert.equal(records[0].delivery_date, null);
+  assert.equal(records[0].issue_dates, null);
+  const blank = parseMaterialWorkbook({ SheetNames:['PL-1'], Sheets:{ 'PL-1':{} } }, 'A290PL.xlsx', 'A290', {
+    utils:{ sheet_to_json:() => [...Array.from({length:5}, () => []), header, ['DWG-2', 'Main', 'P-2', 'steel', null, null, 'x']] },
+  });
+  assert.equal(blank.records[0].delivery_date, null);
+  assert.equal(blank.records[0].issue_dates, null);
+});
+
+test('JSON import validator rejects invalid rows before any database operation', () => {
+  const columns = ['project_code','source_file','source_sheet','source_row','drawing','is_main','status'];
+  assert.throws(() => __test__.validateImportRecords([], columns, 'A290', 'A290PL.xlsx', 'materials'), /JSON/);
+  assert.throws(() => __test__.validateImportRecords([{source_sheet:'PL',source_row:0}], columns, 'A290', 'A290PL.xlsx', 'materials'), /Số dòng nguồn/);
+  const rows = __test__.validateImportRecords([{source_sheet:'PL',source_row:3,drawing:'DWG',is_main:1,status:'đủ'}], columns, 'A290', 'A290PL.xlsx', 'materials');
+  assert.deepEqual(rows[0], {project_code:'A290',source_file:'A290PL.xlsx',source_sheet:'PL',source_row:3,drawing:'DWG',is_main:1,status:'đủ'});
+});
+
+test('PL staging chunks stay within D1 parameter limit and commit is atomic', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync('worker/index.js', 'utf8');
+  const migration = readFileSync('migrations/0002_material_import_staging.sql', 'utf8');
+  const dateMigration = readFileSync('migrations/0003_material_delivery_and_issue_dates.sql', 'utf8');
+  const btpMigration = readFileSync('migrations/0004_btp_materials.sql', 'utf8');
+  assert.equal(__test__.MATERIAL_CHUNK_SIZE, 100);
+  assert.ok(__test__.MATERIAL_INSERT_ROWS_PER_STATEMENT * (__test__.MATERIAL_IMPORT_COLUMNS.length + 2) + 4 <= 100,
+    'chunk inserts must stay below 100 bound parameters per statement');
+  assert.ok(__test__.MATERIAL_COMMIT_BATCH_SIZE >= __test__.MATERIAL_CHUNK_SIZE);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS material_imports/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS material_import_rows/);
+  assert.match(dateMigration, /ALTER TABLE materials ADD COLUMN delivery_date TEXT/);
+  assert.match(dateMigration, /ALTER TABLE material_import_rows ADD COLUMN issue_dates TEXT/);
+  assert.match(btpMigration, /CREATE TABLE IF NOT EXISTS btp_materials/);
+  assert.match(btpMigration, /CREATE TABLE IF NOT EXISTS btp_material_import_rows/);
+  assert.equal(__test__.BTP_IMPORT_COLUMNS.length, 14);
+  assert.match(source, /UPDATE material_imports SET committed = 1, commit_token = \?/);
+  assert.match(source, /DELETE FROM materials WHERE project_code = \? AND EXISTS/);
+  assert.match(source, /INSERT INTO materials \(\$\{insertColumns\}\) SELECT \?, \?, source_sheet, source_row/);
+  assert.match(source, /await env\.DB\.batch\(statements\)/);
+  assert.match(source, /UPDATE material_imports SET next_row = \? WHERE id = \? AND next_row = \?/);
+  assert.match(source, /request\.method === 'POST' && path === '\/api\/admin\/import\/materials'\) return importMaterials/);
+});
+
+test('actual A290 workbook parses to a compact approved-field JSON payload', { skip: !existsSync('Data/A290PL.xlsx') }, async () => {
+  const { readFileSync } = await import('node:fs');
+  const workbook = xlsx.read(readFileSync('Data/A290PL.xlsx'), { type:'buffer', cellDates:true, bookVBA:false });
+  const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', xlsx);
+  assert.equal(payload.records.length, 12698);
+  assert.ok(payload.btp_records.length > 10000);
+  assert.ok(payload.records.some((row) => row.is_main === 1));
+  assert.ok(Buffer.byteLength(JSON.stringify(payload)) < 10 * 1024 * 1024);
+  assert.equal(Object.hasOwn(payload.records[0], 'project_code'), false);
 });
 
 test('real source workbooks are kept outside Git and ignored', { skip: !existsSync('Data/A290PL.xlsx') || !existsSync('QLDA/A290.xlsx') }, () => {

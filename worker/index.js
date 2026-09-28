@@ -4,8 +4,20 @@ const SESSION_SECONDS = 8 * 60 * 60;
 const MATERIAL_COLUMNS = [
   'project_code', 'source_file', 'source_sheet', 'source_row', 'drawing', 'assembly',
   'description', 'part_no', 'size', 'scope', 'quantity', 'weight', 'received',
-  'remaining', 'as_symbol', 'is_main', 'parent', 'status',
+  'remaining', 'as_symbol', 'delivery_date', 'issue_dates', 'is_main', 'parent', 'status',
 ];
+const MATERIAL_IMPORT_COLUMNS = MATERIAL_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
+const BTP_COLUMNS = [
+  'project_code', 'source_file', 'source_sheet', 'source_row', 'part_no', 'material_type', 'unit',
+  'size', 'length_mm', 'design_quantity', 'received', 'remaining', 'daily_progress', 'joint_check', 'status', 'note',
+];
+const BTP_IMPORT_COLUMNS = BTP_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
+const MATERIAL_CHUNK_SIZE = 100;
+const BTP_CHUNK_SIZE = 100;
+const MATERIAL_INSERT_ROWS_PER_STATEMENT = Math.floor(96 / (MATERIAL_IMPORT_COLUMNS.length + 2));
+const MATERIAL_COMMIT_BATCH_SIZE = 500;
+const BTP_COMMIT_BATCH_SIZE = 500;
+const MATERIAL_IMPORT_TTL_SECONDS = 60 * 60;
 const PROGRESS_COLUMNS = [
   'project_code', 'source_file', 'source_row', 'item', 'mh', 'wo_date', 'product_type',
   'classification', 'allocation', 'drawing', 'part_no', 'size', 'quantity', 'unit_weight',
@@ -47,7 +59,7 @@ function corsHeaders(request, env) {
   return {
     'access-control-allow-origin': origin,
     'access-control-allow-credentials': 'true',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
     'vary': 'Origin',
   };
@@ -187,6 +199,40 @@ function statementForInsert(db, table, columns, row) {
   return db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`).bind(...values);
 }
 
+function validateImportRecords(records, columns, projectCode, filename, category) {
+  if (!Array.isArray(records) || records.length === 0 || records.length > 50000) {
+    throw new HttpError(400, 'Dữ liệu JSON không hợp lệ hoặc vượt quá 50.000 dòng.');
+  }
+  return records.map((record, index) => {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+      throw new HttpError(400, `Dòng JSON ${index + 1} không hợp lệ.`);
+    }
+    const row = {};
+    for (const column of columns) {
+      if (column === 'project_code') row[column] = projectCode;
+      else if (column === 'source_file') row[column] = filename;
+      else if (column === 'source_row') {
+        const sourceRow = Number(record[column]);
+        if (!Number.isInteger(sourceRow) || sourceRow < 1) throw new HttpError(400, `Số dòng nguồn không hợp lệ tại dòng JSON ${index + 1}.`);
+        row[column] = sourceRow;
+      } else if (column === 'source_sheet' && category === 'materials') {
+        if (typeof record[column] !== 'string' || !record[column] || record[column].length > 128) {
+          throw new HttpError(400, `Tên sheet không hợp lệ tại dòng JSON ${index + 1}.`);
+        }
+        row[column] = record[column];
+      } else if (column === 'is_main') row[column] = record[column] ? 1 : 0;
+      else {
+        const value = record[column];
+        if (value === null || value === undefined || value === '') row[column] = null;
+        else if (typeof value === 'string' && value.length <= 10000) row[column] = value;
+        else if (typeof value === 'number' && Number.isFinite(value)) row[column] = value;
+        else throw new HttpError(400, `Giá trị không hợp lệ cho ${column} tại dòng JSON ${index + 1}.`);
+      }
+    }
+    return row;
+  });
+}
+
 async function currentUser(request, env) {
   const authorization = request.headers.get('Authorization') || '';
   const bearer = authorization.match(/^Bearer\s+(.+)$/i);
@@ -279,10 +325,44 @@ async function listProjects(env) {
   const { results } = await env.DB.prepare(
     `SELECT p.code, p.name, p.updated_at,
       (SELECT COUNT(*) FROM materials m WHERE m.project_code = p.code) AS material_rows,
+      (SELECT COUNT(*) FROM btp_materials b WHERE b.project_code = p.code) AS btp_rows,
       (SELECT COUNT(*) FROM project_progress q WHERE q.project_code = p.code) AS progress_rows
      FROM projects p ORDER BY p.code`
   ).all();
   return results;
+}
+
+async function listPlFiles(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT project_code, source_file,
+      SUM(material_rows) AS material_rows, SUM(btp_rows) AS btp_rows,
+      MAX(imported_at) AS imported_at
+     FROM (
+       SELECT project_code, source_file, COUNT(*) AS material_rows, 0 AS btp_rows, MAX(imported_at) AS imported_at
+       FROM materials GROUP BY project_code, source_file
+       UNION ALL
+       SELECT project_code, source_file, 0 AS material_rows, COUNT(*) AS btp_rows, MAX(imported_at) AS imported_at
+       FROM btp_materials GROUP BY project_code, source_file
+     ) GROUP BY project_code, source_file ORDER BY project_code, source_file`
+  ).all();
+  return results;
+}
+
+async function deletePlFile(request, env) {
+  await requireAdmin(request, env);
+  const body = await request.json().catch(() => null);
+  const projectCode = safeProjectCode(body?.project_code);
+  const filename = String(body?.filename || '').trim();
+  if (!/^[\w.-]{1,255}PL\.xlsx$/i.test(filename)) throw new HttpError(400, 'Tên file PL không hợp lệ.');
+
+  const results = await env.DB.batch([
+    env.DB.prepare('DELETE FROM materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
+    env.DB.prepare('DELETE FROM btp_materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
+    env.DB.prepare("DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category IN ('materials', 'btp')").bind(projectCode, filename),
+  ]);
+  const deletedRows = results.slice(0, 2).reduce((total, result) => total + Number(result.meta?.changes || 0), 0);
+  if (!deletedRows) throw new HttpError(404, 'Không tìm thấy file PL/BTP để xóa.');
+  return json({ project_code: projectCode, source_file: filename, deleted_rows: deletedRows });
 }
 
 async function importWorkbook(request, env, category) {
@@ -290,25 +370,24 @@ async function importWorkbook(request, env, category) {
   const contentLength = Number(request.headers.get('Content-Length') || 0);
   const maxBytes = Math.min(Number(env.MAX_UPLOAD_BYTES || MAX_FILE_BYTES), MAX_FILE_BYTES);
   if (contentLength > maxBytes) throw new HttpError(413, 'File vượt quá giới hạn 10 MB.');
+  const contentType = request.headers.get('Content-Type') || '';
+  let projectCode;
+  let filename;
+  let records;
   const form = await request.formData();
   const file = form.get('file');
-  const projectCode = safeProjectCode(form.get('project_code'));
+  projectCode = safeProjectCode(form.get('project_code'));
   if (!(file instanceof File)) throw new HttpError(400, 'Vui lòng chọn file Excel.');
-  const filename = file.name;
+  filename = file.name;
   if (!/^[\w.-]+\.xlsx$/i.test(filename) || file.size > maxBytes || file.size === 0) {
     throw new HttpError(400, 'Chỉ nhận workbook .xlsx hợp lệ, dung lượng tối đa 10 MB.');
-  }
-  if (category === 'materials' && !/PL\.xlsx$/i.test(filename)) {
-    throw new HttpError(400, 'Tên file vật tư phải kết thúc bằng PL.xlsx, ví dụ A290PL.xlsx.');
   }
   const xlsx = await import('xlsx');
   const bytes = new Uint8Array(await file.arrayBuffer());
   const workbook = validWorkbook(bytes, xlsx);
-  const records = category === 'materials'
-    ? parseMaterials(workbook, filename, projectCode, xlsx)
-    : parseProjectProgress(workbook, filename, projectCode, xlsx);
-  const table = category === 'materials' ? 'materials' : 'project_progress';
-  const columns = category === 'materials' ? MATERIAL_COLUMNS : PROGRESS_COLUMNS;
+  records = parseProjectProgress(workbook, filename, projectCode, xlsx);
+  const table = 'project_progress';
+  const columns = PROGRESS_COLUMNS;
   const now = new Date().toISOString();
   const runId = crypto.randomUUID();
   const batchSize = 80;
@@ -330,6 +409,162 @@ async function importWorkbook(request, env, category) {
   return json({ project_code: projectCode, category, source_file: filename, imported_rows: records.length });
 }
 
+async function importMaterials(request, env) {
+  await requireAdmin(request, env);
+  const contentLength = Number(request.headers.get('Content-Length') || 0);
+  if (contentLength > 1024 * 1024) throw new HttpError(413, 'Mỗi phần nhập PL không được vượt quá 1 MB.');
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'JSON không hợp lệ.');
+  if (encoder.encode(JSON.stringify(body)).byteLength > 1024 * 1024) {
+    throw new HttpError(413, 'Mỗi phần nhập PL không được vượt quá 1 MB.');
+  }
+
+  if (body.action === 'begin') {
+    const projectCode = safeProjectCode(body.project_code);
+    const filename = String(body.filename || '');
+    const category = body.category === 'btp' ? 'btp' : 'materials';
+    const expectedRows = Number(body.expected_rows);
+    if (!/^[\w.-]{1,255}PL\.xlsx$/i.test(filename)) {
+      throw new HttpError(400, 'Tên file vật tư phải kết thúc bằng PL.xlsx, ví dụ A290PL.xlsx.');
+    }
+    if (!Number.isInteger(expectedRows) || expectedRows < 1 || expectedRows > 50000) {
+      throw new HttpError(400, 'Số dòng nhập phải từ 1 đến 50.000.');
+    }
+    const id = crypto.randomUUID();
+    const expiresAt = Math.floor(Date.now() / 1000) + MATERIAL_IMPORT_TTL_SECONDS;
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM material_import_rows WHERE import_id IN (SELECT id FROM material_imports WHERE expires_at <= ? AND category = ?)').bind(Math.floor(Date.now() / 1000), 'materials'),
+      env.DB.prepare('DELETE FROM btp_material_import_rows WHERE import_id IN (SELECT id FROM material_imports WHERE expires_at <= ? AND category = ?)').bind(Math.floor(Date.now() / 1000), 'btp'),
+      env.DB.prepare('DELETE FROM material_imports WHERE expires_at <= ?').bind(Math.floor(Date.now() / 1000)),
+      env.DB.prepare('INSERT INTO material_imports (id, project_code, source_file, expected_rows, next_row, expires_at, category) VALUES (?, ?, ?, ?, 0, ?, ?)')
+        .bind(id, projectCode, filename, expectedRows, expiresAt, category),
+    ]);
+    return json({ import_id: id, chunk_size: category === 'btp' ? BTP_CHUNK_SIZE : MATERIAL_CHUNK_SIZE, expected_rows: expectedRows, expires_at: expiresAt }, 201);
+  }
+
+  const importId = String(body.import_id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(importId)) throw new HttpError(400, 'Mã phiên nhập không hợp lệ.');
+  const manifest = await env.DB.prepare('SELECT * FROM material_imports WHERE id = ? AND expires_at > ?')
+    .bind(importId, Math.floor(Date.now() / 1000)).first();
+  if (!manifest) throw new HttpError(404, 'Phiên nhập không tồn tại hoặc đã hết hạn; hãy tải lại file.');
+  if (Number(manifest.committed) === 2) {
+    if (body.action === 'commit') {
+      return json({ project_code: manifest.project_code, category: manifest.category || 'materials', source_file: manifest.source_file, imported_rows: Number(manifest.expected_rows) });
+    }
+    throw new HttpError(409, 'Phiên nhập đã được hoàn tất.');
+  }
+  if (Number(manifest.committed) === 1 && body.action !== 'commit') {
+    throw new HttpError(409, 'Phiên nhập đang hoàn tất; hãy gửi lại thao tác commit.');
+  }
+
+  if (body.action === 'chunk') {
+    const startRow = Number(body.start_row);
+    if (!Number.isInteger(startRow) || startRow < 0 || startRow !== Number(manifest.next_row)) {
+      throw new HttpError(409, `Thứ tự phần nhập không hợp lệ; dòng tiếp theo là ${manifest.next_row}.`);
+    }
+    const isBtp = manifest.category === 'btp';
+    const importColumns = isBtp ? BTP_IMPORT_COLUMNS : MATERIAL_IMPORT_COLUMNS;
+    const chunkSize = isBtp ? BTP_CHUNK_SIZE : MATERIAL_CHUNK_SIZE;
+    if (!Array.isArray(body.records) || body.records.length < 1 || body.records.length > chunkSize
+      || startRow + body.records.length > Number(manifest.expected_rows)) {
+      throw new HttpError(400, `Mỗi phần phải có từ 1 đến ${chunkSize} dòng và không vượt tổng số dòng.`);
+    }
+    const records = validateImportRecords(body.records, importColumns, manifest.project_code, manifest.source_file, isBtp ? 'btp' : 'materials');
+    const nextRow = startRow + records.length;
+    const statements = [];
+    const stagingColumns = ['import_id', 'row_index', ...importColumns];
+    const maxRowsPerInsert = Math.floor(96 / stagingColumns.length);
+    const stagingTable = isBtp ? 'btp_material_import_rows' : 'material_import_rows';
+    for (let offset = 0; offset < records.length; offset += maxRowsPerInsert) {
+      const group = records.slice(offset, offset + maxRowsPerInsert);
+      const values = group.flatMap((row, index) => [
+        importId,
+        startRow + offset + index,
+        ...importColumns.map((column) => row[column] ?? null),
+      ]);
+      const rowSelects = group.map(() => `SELECT ${stagingColumns.map(() => '?').join(', ')}`).join(' UNION ALL ');
+      statements.push(env.DB.prepare(`INSERT INTO ${stagingTable} (${stagingColumns.join(', ')}) SELECT * FROM (${rowSelects})`)
+        .bind(...values));
+    }
+    statements.push(env.DB.prepare('UPDATE material_imports SET next_row = ? WHERE id = ? AND next_row = ? AND committed = 0')
+      .bind(nextRow, importId, startRow));
+    const results = await env.DB.batch(statements);
+    if (Number(results.at(-1)?.meta?.changes || 0) !== 1) {
+      throw new HttpError(409, 'Phần nhập đã được xử lý hoặc phiên nhập đang hoàn tất.');
+    }
+    const current = await env.DB.prepare('SELECT next_row FROM material_imports WHERE id = ?').bind(importId).first();
+    if (!current || Number(current.next_row) !== nextRow) {
+      throw new HttpError(409, `Phần nhập chưa được ghi theo đúng thứ tự; dòng tiếp theo là ${current?.next_row ?? 0}.`);
+    }
+    return json({ import_id: importId, received_rows: nextRow });
+  }
+
+  if (body.action === 'commit') {
+    if (Number(manifest.next_row) !== Number(manifest.expected_rows)) {
+      throw new HttpError(409, `Còn thiếu dữ liệu: đã nhận ${manifest.next_row}/${manifest.expected_rows} dòng.`);
+    }
+    const isBtp = manifest.category === 'btp';
+    const stagingTable = isBtp ? 'btp_material_import_rows' : 'material_import_rows';
+    const rowCount = await env.DB.prepare(`SELECT COUNT(*) AS total FROM ${stagingTable} WHERE import_id = ?`).bind(importId).first();
+    if (Number(rowCount?.total) !== Number(manifest.expected_rows)) {
+      throw new HttpError(409, 'Số dòng staging không khớp; dữ liệu PL hiện hành chưa bị thay đổi. Hãy tải lại file.');
+    }
+
+    const now = new Date().toISOString();
+    const runId = crypto.randomUUID();
+    const insertColumns = MATERIAL_COLUMNS.join(', ');
+    const statements = [
+      env.DB.prepare(`UPDATE material_imports SET committed = 1, commit_token = ? WHERE id = ? AND committed = 0 AND next_row = ? AND (SELECT COUNT(*) FROM ${stagingTable} WHERE import_id = ?) = ?`)
+        .bind(runId, importId, manifest.expected_rows, importId, manifest.expected_rows),
+      env.DB.prepare(
+        `INSERT INTO projects (code, name, source_file, updated_at)
+         SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?)
+         ON CONFLICT(code) DO UPDATE SET source_file = excluded.source_file, updated_at = excluded.updated_at`
+      ).bind(manifest.project_code, manifest.project_code, manifest.source_file, now, importId, runId),
+      isBtp
+        ? env.DB.prepare('DELETE FROM btp_materials WHERE project_code = ? AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) AND source_file = ? COLLATE NOCASE')
+          .bind(manifest.project_code, importId, runId, manifest.source_file)
+        : env.DB.prepare('DELETE FROM materials WHERE project_code = ? AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) AND source_file = ? COLLATE NOCASE')
+          .bind(manifest.project_code, importId, runId, manifest.source_file),
+    ];
+    const commitBatchSize = isBtp ? BTP_COMMIT_BATCH_SIZE : MATERIAL_COMMIT_BATCH_SIZE;
+    for (let startRow = 0; startRow < Number(manifest.expected_rows); startRow += commitBatchSize) {
+      statements.push(isBtp ? env.DB.prepare(
+        `INSERT INTO btp_materials (${BTP_COLUMNS.join(', ')}) SELECT ?, ?, source_sheet, source_row, part_no, material_type, unit, size, length_mm, design_quantity, received, remaining, daily_progress, joint_check, status, note FROM btp_material_import_rows
+         WHERE import_id = ? AND row_index >= ? AND row_index < ?
+           AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
+      ).bind(manifest.project_code, manifest.source_file, importId, startRow,
+        Math.min(startRow + BTP_COMMIT_BATCH_SIZE, Number(manifest.expected_rows)), importId, runId) : env.DB.prepare(
+        `INSERT INTO materials (${insertColumns}) SELECT ?, ?, source_sheet, source_row, drawing, assembly, description, part_no, size, scope, quantity, weight, received, remaining, as_symbol, delivery_date, issue_dates, is_main, parent, status FROM material_import_rows
+         WHERE import_id = ? AND row_index >= ? AND row_index < ?
+           AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
+      ).bind(manifest.project_code, manifest.source_file, importId, startRow,
+        Math.min(startRow + MATERIAL_COMMIT_BATCH_SIZE, Number(manifest.expected_rows)), importId, runId));
+    }
+    statements.push(
+      env.DB.prepare('INSERT INTO import_runs (id, project_code, category, source_file, imported_rows) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?)')
+        .bind(runId, manifest.project_code, isBtp ? 'btp' : 'materials', manifest.source_file, manifest.expected_rows, importId, runId),
+      env.DB.prepare('UPDATE material_imports SET committed = 2 WHERE id = ? AND committed = 1 AND commit_token = ?').bind(importId, runId),
+      env.DB.prepare(`DELETE FROM ${stagingTable} WHERE import_id = ? AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 2 AND commit_token = ?)`).bind(importId, importId, runId),
+    );
+    const results = await env.DB.batch(statements);
+    if (Number(results[0]?.meta?.changes || 0) !== 1) {
+      throw new HttpError(409, 'Phiên nhập đã thay đổi hoặc không đầy đủ; dữ liệu PL hiện hành chưa bị thay thế.');
+    }
+    return json({ project_code: manifest.project_code, category: isBtp ? 'btp' : 'materials', source_file: manifest.source_file, imported_rows: Number(manifest.expected_rows) });
+  }
+
+  if (body.action === 'abort') {
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM ${manifest.category === 'btp' ? 'btp_material_import_rows' : 'material_import_rows'} WHERE import_id = ?`).bind(importId),
+      env.DB.prepare('DELETE FROM material_imports WHERE id = ?').bind(importId),
+    ]);
+    return json({ aborted: true, import_id: importId });
+  }
+
+  throw new HttpError(400, 'Thao tác nhập PL không hợp lệ.');
+}
+
 async function route(request, env) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -348,22 +583,30 @@ async function route(request, env) {
     return json({ user: user ? { id: user.id, username: user.username, role: user.role } : null });
   }
   if (request.method === 'GET' && path === '/api/projects') {
-    await requireUser(request, env);
     return json({ projects: await listProjects(env) });
   }
+  if (request.method === 'GET' && path === '/api/admin/pl-files') {
+    await requireAdmin(request, env);
+    return json({ files: await listPlFiles(env) });
+  }
+  if (request.method === 'DELETE' && path === '/api/admin/pl-files') return deletePlFile(request, env);
   if (request.method === 'POST' && path === '/api/admin/users') return createViewer(request, env);
-  if (request.method === 'POST' && path === '/api/admin/import/materials') return importWorkbook(request, env, 'materials');
+  if (request.method === 'POST' && path === '/api/admin/import/materials') return importMaterials(request, env);
   if (request.method === 'POST' && path === '/api/admin/import/projects') return importWorkbook(request, env, 'projects');
   const materialMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/materials$/);
   if (request.method === 'GET' && materialMatch) {
-    await requireUser(request, env);
     const projectCode = safeProjectCode(materialMatch[1]);
     const { results } = await env.DB.prepare('SELECT * FROM materials WHERE project_code = ? ORDER BY source_file, source_sheet, source_row').bind(projectCode).all();
     return json({ project_code: projectCode, rows: results });
   }
+  const btpMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/btp$/);
+  if (request.method === 'GET' && btpMatch) {
+    const projectCode = safeProjectCode(btpMatch[1]);
+    const { results } = await env.DB.prepare('SELECT * FROM btp_materials WHERE project_code = ? ORDER BY source_file, source_sheet, source_row').bind(projectCode).all();
+    return json({ project_code: projectCode, rows: results });
+  }
   const progressMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/progress$/);
   if (request.method === 'GET' && progressMatch) {
-    await requireUser(request, env);
     const projectCode = safeProjectCode(progressMatch[1]);
     const { results } = await env.DB.prepare('SELECT * FROM project_progress WHERE project_code = ? ORDER BY source_file, source_row').bind(projectCode).all();
     return json({ project_code: projectCode, rows: results });
@@ -388,4 +631,4 @@ export default {
   },
 };
 
-export const __test__ = { safeProjectCode, normalizedRow, parseProjectProgress, parseMaterials, validWorkbook, QLDA_FIELDS, MATERIAL_FIELDS };
+export const __test__ = { safeProjectCode, normalizedRow, parseProjectProgress, parseMaterials, validWorkbook, validateImportRecords, QLDA_FIELDS, MATERIAL_FIELDS, MATERIAL_IMPORT_COLUMNS, BTP_IMPORT_COLUMNS, MATERIAL_CHUNK_SIZE, MATERIAL_INSERT_ROWS_PER_STATEMENT, MATERIAL_COMMIT_BATCH_SIZE };
