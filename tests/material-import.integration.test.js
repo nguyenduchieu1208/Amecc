@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import * as xlsx from 'xlsx';
+import xlsx from 'xlsx';
 import worker from '../worker/index.js';
 import { parseMaterialWorkbook } from '../public/material-import.js';
 
@@ -57,6 +57,8 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     database.exec(readFileSync('migrations/0002_material_import_staging.sql', 'utf8'));
     database.exec(readFileSync('migrations/0003_material_delivery_and_issue_dates.sql', 'utf8'));
     database.exec(readFileSync('migrations/0004_btp_materials.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0005_btp_unit_weight.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0006_btp_bom_details.sql', 'utf8'));
 
     const token = 'isolated-a290-import-test-session';
     const tokenHash = createHash('sha256').update(token).digest('base64');
@@ -71,7 +73,7 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     database.prepare(`INSERT INTO import_runs (id, project_code, category, source_file, imported_rows)
       VALUES ('previous-run', 'A290', 'materials', 'ExistingPL.xlsx', 1)`).run();
 
-    const workbook = xlsx.read(readFileSync(workbookPath), { type: 'buffer', cellDates: true, bookVBA: false });
+    const workbook = xlsx.read(readFileSync(workbookPath), { type: 'buffer', cellDates: false, bookVBA: false });
     const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', xlsx);
     assert.equal(payload.records.length, 12698);
     const env = { DB: createD1(database) };
@@ -154,6 +156,21 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     assert.equal(apiRow.delivery_date, '2026-09-01');
     assert.equal(apiRow.issue_dates, '2026-01-01, 2026-03-01');
 
+    const actualBtpRow = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', xlsx).btp_records
+      .find((row) => row.unit === 'MCC' && row.remaining > 0 && row.daily_progress?.includes(';') && row.unit_weight);
+    assert.ok(actualBtpRow, 'A290 workbook should provide a remaining BTP row with U.Weight and dated receipts');
+    assert.match(actualBtpRow.daily_progress, /^\d{2}\/\d{2}\/\d{4}: \d+(?:; \d{2}\/\d{2}\/\d{4}: \d+)+$/);
+    const datedSheet = workbook.Sheets['BTP-A290U6T1P1'];
+    const datedRows = xlsx.utils.sheet_to_json(datedSheet, { header:1, raw:true, defval:null, blankrows:true });
+    const firstDateColumn = datedRows[28].findIndex((value) => typeof value === 'number' && value > 20000);
+    assert.notEqual(firstDateColumn, -1, 'source BTP sheet should contain a dated receipt column');
+    const expectedDate = xlsx.SSF.parse_date_code(datedRows[28][firstDateColumn]);
+    const expectedDateLabel = String(expectedDate.d).padStart(2, '0') + '/' + String(expectedDate.m).padStart(2, '0') + '/' + expectedDate.y;
+    const sourceRowIndex = datedRows.findIndex((row, index) => index > 28 && Number(row[firstDateColumn]) > 0);
+    assert.ok(sourceRowIndex > 28, 'source BTP sheet should have a receipt quantity in its first dated column');
+    const firstDatedRow = payload.btp_records.find((row) => row.source_sheet === 'BTP-A290U6T1P1' && row.source_row === sourceRowIndex + 1);
+    assert.match(firstDatedRow?.daily_progress || '', new RegExp('^' + expectedDateLabel.replaceAll('/', '\\/') + ':'), 'receipt date should match the Excel date serial without a timezone shift');
+
     const btpBegin = await post(env, token, {
       action:'begin', category:'btp', project_code:'A290', filename:'A290PL.xlsx', expected_rows:1,
     });
@@ -161,18 +178,18 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     const btpSession = await btpBegin.json();
     const btpChunk = await post(env, token, {
       action:'chunk', import_id:btpSession.import_id, start_row:0,
-      records:[{ source_sheet:'BTP-A290', source_row:27, part_no:'BTP-001', material_type:'Shape', unit:'MCC', size:'L75', length_mm:350, design_quantity:2, received:1, remaining:1, daily_progress:'21/07: 1', joint_check:'✓', status:'Còn thiếu', note:null }],
+      records:[{ source_sheet:actualBtpRow.source_sheet, source_row:actualBtpRow.source_row, part_no:actualBtpRow.part_no, material_type:actualBtpRow.material_type, description:actualBtpRow.description, material:actualBtpRow.material, unit:actualBtpRow.unit, size:actualBtpRow.size, length_mm:actualBtpRow.length_mm, unit_weight:actualBtpRow.unit_weight, total_weight:actualBtpRow.total_weight, design_quantity:actualBtpRow.design_quantity, received:actualBtpRow.received, remaining:actualBtpRow.remaining, daily_progress:actualBtpRow.daily_progress, joint_check:actualBtpRow.joint_check, status:actualBtpRow.status, note:actualBtpRow.note }],
     });
     assert.equal(btpChunk.status, 200, await btpChunk.text());
     const btpCommit = await post(env, token, { action:'commit', import_id:btpSession.import_id });
     assert.equal(btpCommit.status, 200, await btpCommit.text());
-    const storedBtp = database.prepare("SELECT part_no, material_type, unit, size, length_mm, design_quantity, received, remaining, daily_progress, joint_check, status, note FROM btp_materials WHERE project_code = 'A290'").get();
-    assert.deepEqual({ ...storedBtp }, { part_no:'BTP-001', material_type:'Shape', unit:'MCC', size:'L75', length_mm:350, design_quantity:2, received:1, remaining:1, daily_progress:'21/07: 1', joint_check:'✓', status:'Còn thiếu', note:null });
+    const storedBtp = database.prepare("SELECT part_no, material_type, description, material, unit, size, length_mm, unit_weight, total_weight, design_quantity, received, remaining, daily_progress, joint_check, status, note FROM btp_materials WHERE project_code = 'A290'").get();
+    assert.deepEqual({ ...storedBtp }, { part_no:actualBtpRow.part_no, material_type:actualBtpRow.material_type, description:actualBtpRow.description, material:actualBtpRow.material, unit:actualBtpRow.unit, size:actualBtpRow.size, length_mm:actualBtpRow.length_mm, unit_weight:actualBtpRow.unit_weight, total_weight:actualBtpRow.total_weight, design_quantity:actualBtpRow.design_quantity, received:actualBtpRow.received, remaining:actualBtpRow.remaining, daily_progress:actualBtpRow.daily_progress, joint_check:actualBtpRow.joint_check, status:actualBtpRow.status, note:actualBtpRow.note });
     const btpResponse = await worker.fetch(new Request('https://amecc.test/api/projects/A290/btp', {
       headers:{ authorization:`Bearer ${token}` },
     }), env);
     assert.equal(btpResponse.status, 200);
-    assert.equal((await btpResponse.json()).rows[0].part_no, 'BTP-001');
+    assert.equal((await btpResponse.json()).rows[0].part_no, actualBtpRow.part_no);
 
     const retryCommit = await post(env, token, { action: 'commit', import_id: session.import_id });
     assert.equal(retryCommit.status, 200);
@@ -191,6 +208,7 @@ test('project data is public while PL file deletion is restricted to admins and 
       'migrations/0002_material_import_staging.sql',
       'migrations/0003_material_delivery_and_issue_dates.sql',
       'migrations/0004_btp_materials.sql',
+      'migrations/0005_btp_unit_weight.sql',
     ]) database.exec(readFileSync(migration, 'utf8'));
 
     database.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')

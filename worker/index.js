@@ -8,8 +8,8 @@ const MATERIAL_COLUMNS = [
 ];
 const MATERIAL_IMPORT_COLUMNS = MATERIAL_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
 const BTP_COLUMNS = [
-  'project_code', 'source_file', 'source_sheet', 'source_row', 'part_no', 'material_type', 'unit',
-  'size', 'length_mm', 'design_quantity', 'received', 'remaining', 'daily_progress', 'joint_check', 'status', 'note',
+  'project_code', 'source_file', 'source_sheet', 'source_row', 'part_no', 'material_type', 'description', 'material', 'unit',
+  'size', 'length_mm', 'unit_weight', 'total_weight', 'design_quantity', 'received', 'remaining', 'daily_progress', 'joint_check', 'status', 'note',
 ];
 const BTP_IMPORT_COLUMNS = BTP_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
 const MATERIAL_CHUNK_SIZE = 100;
@@ -108,6 +108,13 @@ function safeProjectCode(value) {
   const code = String(value || '').trim().toUpperCase();
   if (!/^[A-Z0-9_-]{2,32}$/.test(code)) throw new HttpError(400, 'Mã dự án không hợp lệ.');
   return code;
+}
+
+function projectCodeFromFilename(filename, category) {
+  const projectName = category === 'materials'
+    ? String(filename).replace(/PL\.xlsx$/i, '')
+    : String(filename).replace(/\.xlsx$/i, '');
+  return safeProjectCode(projectName);
 }
 
 function normalizeValue(value) {
@@ -376,12 +383,12 @@ async function importWorkbook(request, env, category) {
   let records;
   const form = await request.formData();
   const file = form.get('file');
-  projectCode = safeProjectCode(form.get('project_code'));
   if (!(file instanceof File)) throw new HttpError(400, 'Vui lòng chọn file Excel.');
   filename = file.name;
   if (!/^[\w.-]+\.xlsx$/i.test(filename) || file.size > maxBytes || file.size === 0) {
     throw new HttpError(400, 'Chỉ nhận workbook .xlsx hợp lệ, dung lượng tối đa 10 MB.');
   }
+  projectCode = projectCodeFromFilename(filename, category);
   const xlsx = await import('xlsx');
   const bytes = new Uint8Array(await file.arrayBuffer());
   const workbook = validWorkbook(bytes, xlsx);
@@ -420,12 +427,15 @@ async function importMaterials(request, env) {
   }
 
   if (body.action === 'begin') {
-    const projectCode = safeProjectCode(body.project_code);
     const filename = String(body.filename || '');
     const category = body.category === 'btp' ? 'btp' : 'materials';
+    const projectCode = safeProjectCode(body.project_code);
     const expectedRows = Number(body.expected_rows);
     if (!/^[\w.-]{1,255}PL\.xlsx$/i.test(filename)) {
       throw new HttpError(400, 'Tên file vật tư phải kết thúc bằng PL.xlsx, ví dụ A290PL.xlsx.');
+    }
+    if (projectCode !== projectCodeFromFilename(filename, 'materials')) {
+      throw new HttpError(400, 'Mã dự án phải khớp với phần tên file đứng trước PL.xlsx.');
     }
     if (!Number.isInteger(expectedRows) || expectedRows < 1 || expectedRows > 50000) {
       throw new HttpError(400, 'Số dòng nhập phải từ 1 đến 50.000.');
@@ -530,7 +540,7 @@ async function importMaterials(request, env) {
     const commitBatchSize = isBtp ? BTP_COMMIT_BATCH_SIZE : MATERIAL_COMMIT_BATCH_SIZE;
     for (let startRow = 0; startRow < Number(manifest.expected_rows); startRow += commitBatchSize) {
       statements.push(isBtp ? env.DB.prepare(
-        `INSERT INTO btp_materials (${BTP_COLUMNS.join(', ')}) SELECT ?, ?, source_sheet, source_row, part_no, material_type, unit, size, length_mm, design_quantity, received, remaining, daily_progress, joint_check, status, note FROM btp_material_import_rows
+        `INSERT INTO btp_materials (${BTP_COLUMNS.join(', ')}) SELECT ?, ?, source_sheet, source_row, part_no, material_type, description, material, unit, size, length_mm, unit_weight, total_weight, design_quantity, received, remaining, daily_progress, joint_check, status, note FROM btp_material_import_rows
          WHERE import_id = ? AND row_index >= ? AND row_index < ?
            AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
       ).bind(manifest.project_code, manifest.source_file, importId, startRow,

@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import * as xlsx from 'xlsx';
 import { __test__ } from '../worker/index.js';
 import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js';
-import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, highlightMatch } from '../public/material-search.js';
+import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch, summarizeBtpShortages } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
@@ -84,6 +84,25 @@ test('BTP filters by source sheet and combines sheet selection with text search'
   assert.deepEqual(filterBtpRows(rows, 't5p1', ''), rows.slice(0, 2));
   assert.deepEqual(filterBtpRows(rows, 'T5P1', 'plate'), [rows[1]]);
   assert.deepEqual(filterBtpRows(rows, '', 'shape'), [rows[0], rows[2]]);
+  assert.deepEqual(filterBtpRows([{ source_file:'A.xlsx',source_sheet:'T5P1' },{ source_file:'B.xlsx',source_sheet:'T5P1' }], JSON.stringify(['A.xlsx','T5P1']), ''), [{ source_file:'A.xlsx',source_sheet:'T5P1' }]);
+});
+
+test('BTP shortage quantities and weights are grouped by delivery unit without inventing missing weight', () => {
+  const rows = [
+    { unit:'MCC',part_no:'A',remaining:2,design_quantity:5,received:3,unit_weight:10 },
+    { unit:'MCC',part_no:'B',design_quantity:4,received:1,unit_weight:2.5 },
+    { unit:'PMC',part_no:'C',remaining:3,unit_weight:null },
+    { unit:null,part_no:'D',remaining:0,unit_weight:10 },
+  ];
+  assert.equal(getBtpShortageQuantity(rows[0]), 2);
+  assert.equal(getBtpShortageQuantity(rows[1]), 3);
+  assert.equal(getBtpShortageQuantity({ design_quantity:5 }), null);
+  assert.equal(getBtpShortageWeight(rows[0]), 20);
+  assert.equal(getBtpShortageWeight(rows[2]), null);
+  assert.deepEqual(summarizeBtpShortages(rows), [
+    { unit:'MCC',shortage_rows:2,shortage_quantity:5,shortage_weight:27.5,weight_missing_rows:0,part_count:2 },
+    { unit:'PMC',shortage_rows:1,shortage_quantity:3,shortage_weight:0,weight_missing_rows:1,part_count:1 },
+  ]);
 });
 
 test('material sheet filter scopes rows to the selected workbook and sheet', () => {
@@ -98,25 +117,47 @@ test('material sheet filter scopes rows to the selected workbook and sheet', () 
   assert.deepEqual(filterMaterialRowsBySheet(rows, 'invalid'), []);
 });
 
-test('PL materials page has per-sheet detail filters and no separate BTP detail page', async () => {
+test('material incomplete filter includes partially received and not-yet-received rows', () => {
+  const rows = [
+    { part_no:'PARTIAL', status:'chưa đủ' },
+    { part_no:'NOT-RECEIVED', status:'chưa có' },
+    { part_no:'COMPLETE', status:'đủ' },
+    { part_no:'LEGACY-PARTIAL', quantity:10, received:4 },
+    { part_no:'LEGACY-COMPLETE', quantity:10, remaining:0 },
+  ];
+  assert.deepEqual(filterMaterialRowsByStatus(rows, 'incomplete'), rows.filter((row) => ['PARTIAL', 'NOT-RECEIVED', 'LEGACY-PARTIAL'].includes(row.part_no)));
+  assert.deepEqual(filterMaterialRowsByStatus(rows, ''), rows);
+});
+
+test('material shortage report quantity prefers remaining and falls back to required minus received', () => {
+  assert.equal(getMaterialShortageQuantity({ quantity:10, received:4, remaining:7 }), 7);
+  assert.equal(getMaterialShortageQuantity({ quantity:10, received:4 }), 6);
+  assert.equal(getMaterialShortageQuantity({ quantity:4, received:7 }), 0);
+  assert.equal(getMaterialShortageQuantity({ quantity:10 }), null);
+});
+
+test('BTP has a separate one-table workspace with filters and export above the table', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync('public/app.js', 'utf8');
   const styles = readFileSync('public/styles.css', 'utf8');
-  const materialColumns = app.match(/const materialColumns = \[([^\]]+)\]/)?.[1]
-    .split(',').map((column) => column.trim().replace(/^['"]|['"]$/g, ''));
-  assert.ok(materialColumns, 'PL material columns must be defined');
-  for (const hidden of ['assembly', 'source_sheet', 'source_row', 'scope', 'as_symbol', 'issue_dates']) {
-    assert.equal(materialColumns.includes(hidden), false, `${hidden} must not be displayed in the PL table`);
-  }
-  assert.ok(materialColumns.includes('delivery_date'), 'PL table keeps the recognized delivery date');
+  const btpStart = app.indexOf('function btpPage()');
+  const btpEnd = app.indexOf('function projectsPage()', btpStart);
+  const btpPage = app.slice(btpStart, btpEnd);
+  assert.ok(btpStart >= 0 && btpEnd > btpStart, 'BTP must have its own render function');
+  assert.equal((btpPage.match(/<table\b/g) || []).length, 1, 'BTP should render one combined audit table');
   assert.match(app, /class="sidebar-settings"[\s\S]*?id="themeSelect"/);
   assert.match(app, /id="sidebarCollapse"/);
   assert.match(styles, /@media\(max-width:820px\)\{\.shell\.sidebar-collapsed \.sidebar\{width:min\(290px,86vw\);min-width:min\(290px,86vw\)/);
   assert.match(styles, /\.shell\.sidebar-collapsed \.main-area\{margin-left:0\}/);
   assert.match(styles, /@media\(min-width:821px\)\{\.shell\.sidebar-collapsed \.nav-group\.expanded \.nav-children\{display:none\}\}/);
-  assert.match(app, /class="material-filter-stack"[\s\S]*?id="materialSheetFilter"[\s\S]*?id="materialSearch"/);
-  assert.match(app, /Toàn bộ file \(\$\{sheetOptions\.length\} sheet\)/);
-  assert.doesNotMatch(app, /function btpPage\(|Chi tiết BTP|href="#btp"/);
+  assert.match(app, /href="#btp">Bán thành phẩm/);
+  assert.match(btpPage, /id="btpSheetFilter"[\s\S]*id="btpReceiptDateFilter"[\s\S]*id="btpStatusFilter"[\s\S]*id="btpSearch"[\s\S]*id="exportBtpShortage"/);
+  assert.ok(btpPage.indexOf('id="exportBtpShortage"') < btpPage.indexOf('<table'));
+  assert.match(btpPage, /Cấu kiện BOM[\s\S]*Mã BOM[\s\S]*Mã BTP \(chi tiết\)[\s\S]*Tiến độ theo ngày/);
+  assert.match(btpPage, /state\.btpData\?\.rows/);
+  assert.match(styles, /\.btp-control-bar\{position:sticky;top:82px/);
+  assert.match(styles, /\.btp-unified-table tbody td:nth-child\(1\)\{position:sticky;left:0/);
+  assert.match(app, /state\.page === 'btp' \? btpPage\(\)/);
   assert.match(app, /localeCompare\(String\(right\.code\), 'vi', \{ numeric:true, sensitivity:'base' \}\)/);
   assert.match(app, /\[\.\.\.state\.projects\]\.sort\(\(left, right\) => String\(left\.code\)\.localeCompare\(String\(right\.code\)/);
 });
@@ -181,19 +222,19 @@ test('browser PL parser emits only approved import fields and preserves grouping
 });
 
 test('BTP parser recognizes detail headers, keeps dated progress, and excludes issue date fields', () => {
-  const headers = ['Chủng loại','Part No.1','Size','Description','Length','Material',"T.Q'ty",'U.Weight','T.Weight','Đã nhận','SL Nhận','Còn thiếu',new Date('2026-07-21T00:00:00Z'),'Ktra nối','Lấy data','KO BB','Tôn','Cảnh báo thừa','DVG','MPR No','Qty MPR','Cutting No.','Qty Cutting',new Date('2026-07-23T00:00:00Z'),'Ghi Chú'];
-  const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,2.4,4.8,0,1,1,3,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026','Kiểm tra ghi chú'];
+  const headers = ['Chủng loại','Part No.1','Size','Description','Length','Material',"T.Q'ty",'U.Weight','T.Weight','Đã nhận','SL Nhận','Còn thiếu','21/07',new Date('2026-07-23T00:00:00Z'),'Ktra nối','Lấy data','KO BB','Tôn','Cảnh báo thừa','DVG','MPR No','Qty MPR','Cutting No.','Qty Cutting','Date Issue','Ghi Chú'];
+  const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,2.4,4.8,0,1,1,3,1,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026','Kiểm tra ghi chú'];
   const workbook = { SheetNames:['BTP-A290T1P1'], Sheets:{ 'BTP-A290T1P1':{} } };
   const parser = { utils:{ sheet_to_json:() => [...Array.from({length:25}, () => []), headers, detail] } };
   const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
   assert.equal(payload.records.length, 0);
-  assert.deepEqual(BTP_COLUMNS, ['part_no','material_type','unit','size','length_mm','design_quantity','received','remaining','daily_progress','joint_check','status','note']);
+  assert.deepEqual(BTP_COLUMNS, ['part_no','material_type','description','material','unit','size','length_mm','unit_weight','total_weight','design_quantity','received','remaining','daily_progress','joint_check','status','note']);
   assert.equal(payload.btp_records.length, 1);
   assert.deepEqual(payload.btp_records[0], {
-    source_sheet:'BTP-A290T1P1', source_row:27, part_no:'BTP-001', material_type:'Shape', size:'L-75X75X6', length_mm:350,
-    design_quantity:2, received:0, remaining:1, daily_progress:'21/07/2026: 3', joint_check:'✓', unit:'MCC', status:'Còn thiếu', note:'Kiểm tra ghi chú',
+    source_sheet:'BTP-A290T1P1', source_row:27, part_no:'BTP-001', material_type:'Shape', description:'ANGLE', material:'A36', size:'L-75X75X6', length_mm:350,
+    unit_weight:2.4, total_weight:4.8, design_quantity:2, received:0, remaining:1, daily_progress:'21/07/2026: 3; 23/07/2026: 1', joint_check:'✓', unit:'MCC', status:'Còn thiếu', note:'Kiểm tra ghi chú',
   });
-  assert.equal(Object.keys(payload.btp_records[0]).some((field) => ['description','material','weight','issue_date','date_issue','MPR No','Cutting No.'].includes(field)), false);
+  assert.equal(Object.keys(payload.btp_records[0]).some((field) => ['weight','issue_date','date_issue','MPR No','Cutting No.'].includes(field)), false);
 });
 
 test('PL parser detects shifted headers and maps receipt record dates, normalizing duplicates', () => {
@@ -239,6 +280,8 @@ test('PL staging chunks stay within D1 parameter limit and commit is atomic', as
   const migration = readFileSync('migrations/0002_material_import_staging.sql', 'utf8');
   const dateMigration = readFileSync('migrations/0003_material_delivery_and_issue_dates.sql', 'utf8');
   const btpMigration = readFileSync('migrations/0004_btp_materials.sql', 'utf8');
+  const btpWeightMigration = readFileSync('migrations/0005_btp_unit_weight.sql', 'utf8');
+  const btpDetailsMigration = readFileSync('migrations/0006_btp_bom_details.sql', 'utf8');
   assert.equal(__test__.MATERIAL_CHUNK_SIZE, 100);
   assert.ok(__test__.MATERIAL_INSERT_ROWS_PER_STATEMENT * (__test__.MATERIAL_IMPORT_COLUMNS.length + 2) + 4 <= 100,
     'chunk inserts must stay below 100 bound parameters per statement');
@@ -249,7 +292,11 @@ test('PL staging chunks stay within D1 parameter limit and commit is atomic', as
   assert.match(dateMigration, /ALTER TABLE material_import_rows ADD COLUMN issue_dates TEXT/);
   assert.match(btpMigration, /CREATE TABLE IF NOT EXISTS btp_materials/);
   assert.match(btpMigration, /CREATE TABLE IF NOT EXISTS btp_material_import_rows/);
-  assert.equal(__test__.BTP_IMPORT_COLUMNS.length, 14);
+  assert.match(btpWeightMigration, /ALTER TABLE btp_materials ADD COLUMN unit_weight REAL/);
+  assert.match(btpDetailsMigration, /ALTER TABLE btp_materials ADD COLUMN description TEXT/);
+  assert.match(btpDetailsMigration, /ALTER TABLE btp_materials ADD COLUMN material TEXT/);
+  assert.match(btpDetailsMigration, /ALTER TABLE btp_materials ADD COLUMN total_weight REAL/);
+  assert.equal(__test__.BTP_IMPORT_COLUMNS.length, 18);
   assert.match(source, /UPDATE material_imports SET committed = 1, commit_token = \?/);
   assert.match(source, /DELETE FROM materials WHERE project_code = \? AND EXISTS/);
   assert.match(source, /INSERT INTO materials \(\$\{insertColumns\}\) SELECT \?, \?, source_sheet, source_row/);

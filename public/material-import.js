@@ -17,27 +17,45 @@ const MATERIAL_HEADER_ALIASES = {
 };
 
 export const BTP_COLUMNS = [
-  'part_no', 'material_type', 'unit', 'size', 'length_mm', 'design_quantity',
+  'part_no', 'material_type', 'description', 'material', 'unit', 'size', 'length_mm', 'unit_weight', 'total_weight', 'design_quantity',
   'received', 'remaining', 'daily_progress', 'joint_check', 'status', 'note',
 ];
 
 const BTP_HEADER_ALIASES = {
   part_no: ['partno1', 'partno', 'mabtpchitiet', 'mabtpchitietchitiet'],
   material_type: ['chungloai', 'chungloai1'],
+  description: ['description', 'mota'],
+  material: ['material', 'grade', 'steelgrade'],
   unit: ['dvg'],
   size: ['size', 'quycach', 'quycachsize'],
   length_mm: ['length', 'chieudai', 'chieudaimm'],
+  unit_weight: ['uweight', 'unitweight', 'trongluongdonvi'],
+  total_weight: ['tweight', 'totalweight', 'trongluong'],
   design_quantity: ['tqty', 'slthietke', 'sltk', 'sltkthietke'],
   received: ['danhan', 'received', 'receivedqty', 'slnhan'],
   remaining: ['conthieu', 'remaining'],
   daily_progress: ['tiendotheongay'],
   joint_check: ['ktranoi'],
   status: ['trangthai', 'status'],
-  note: ['ghichu', 'note', 'comments'],
+  note: ['ghichu', 'note', 'comments', 'canhbaothua', 'warning', 'alert'],
 };
 
 function normalizeHeader(value) {
   return typeof value === 'string' ? value.replace(/[đĐ]/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+}
+
+export function projectCodeFromFilename(filename, category) {
+  const name = String(filename ?? '').trim();
+  const isMaterials = category === 'materials';
+  const validName = isMaterials ? /^[\w.-]+PL\.xlsx$/i.test(name) : /^[\w.-]+\.xlsx$/i.test(name);
+  if (!validName) throw new Error(isMaterials
+    ? 'Tên file vật tư phải kết thúc bằng PL.xlsx.'
+    : 'Tên file QLDA phải kết thúc bằng .xlsx.');
+  const projectCode = name.replace(isMaterials ? /PL\.xlsx$/i : /\.xlsx$/i, '');
+  if (!/^[A-Za-z0-9_-]{2,32}$/.test(projectCode)) {
+    throw new Error(`Không thể lấy mã dự án từ tên file ${name}; hãy đặt tên file theo mã dự án.`);
+  }
+  return projectCode.toUpperCase();
 }
 
 function findMaterialHeader(header, aliases) {
@@ -104,15 +122,37 @@ function btpHeaderIndex(rows) {
   return -1;
 }
 
-function btpDateHeader(value, xlsx) {
+function parseExcelDateCode(value, xlsx) {
+  const parse = xlsx?.SSF?.parse_date_code ?? xlsx?.default?.SSF?.parse_date_code;
+  return typeof parse === 'function' ? parse(value) : null;
+}
+
+function btpDateHeader(value, xlsx, fallbackYear = null) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return `${String(value.getUTCDate()).padStart(2, '0')}/${String(value.getUTCMonth() + 1).padStart(2, '0')}/${value.getUTCFullYear()}`;
   }
   if (typeof value === 'number' && value > 20000) {
-    const date = xlsx?.SSF?.parse_date_code?.(value);
+    const date = parseExcelDateCode(value, xlsx);
     if (date?.y && date?.m && date?.d) return `${String(date.d).padStart(2, '0')}/${String(date.m).padStart(2, '0')}/${date.y}`;
   }
-  if (typeof value === 'string' && /^\d{1,2}[/.\-]\d{1,2}(?:[/.\-]\d{2,4})?$/.test(value.trim())) return value.trim();
+  if (typeof value === 'string') {
+    const text = value.trim();
+    const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (iso) return String(iso[3]).padStart(2, '0') + '/' + String(iso[2]).padStart(2, '0') + '/' + iso[1];
+    const short = text.match(/^(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?$/);
+    if (short) {
+      const day = Number(short[1]);
+      const month = Number(short[2]);
+      let year = short[3] ? Number(short[3]) : fallbackYear;
+      if (year !== null && year !== undefined && year < 100) year += 2000;
+      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+      if (year) {
+        const parsed = new Date(Date.UTC(year, month - 1, day));
+        if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return null;
+      }
+      return String(day).padStart(2, '0') + '/' + String(month).padStart(2, '0') + (year ? '/' + year : '');
+    }
+  }
   return null;
 }
 
@@ -120,12 +160,21 @@ function parseBtpSheet(sheetName, rows, xlsx) {
   const headerIndex = btpHeaderIndex(rows);
   if (headerIndex === -1) return [];
   const columns = btpColumns(rows[headerIndex]);
+  const noteColumns = rows[headerIndex].flatMap((value, index) => BTP_HEADER_ALIASES.note.includes(normalizeHeader(value)) ? [index] : []);
   const remainingColumn = Number(Object.keys(columns).find((column) => columns[column] === 'remaining'));
-  const jointCheckColumn = Number(Object.keys(columns).find((column) => columns[column] === 'joint_check'));
+  const unitColumn = Number(Object.keys(columns).find((column) => columns[column] === 'unit'));
+  const years = rows[headerIndex].flatMap((value) => {
+    const date = btpDateHeader(value, xlsx);
+    const year = date?.match(/\/(\d{4})$/)?.[1];
+    return year ? [Number(year)] : [];
+  });
+  const yearCounts = new Map();
+  for (const year of years) yearCounts.set(year, (yearCounts.get(year) || 0) + 1);
+  const fallbackYear = [...yearCounts].sort((left, right) => right[1] - left[1] || right[0] - left[0])[0]?.[0] ?? null;
   const dateColumns = rows[headerIndex].flatMap((value, index) => {
     const column = index + 1;
-    if (!remainingColumn || !jointCheckColumn || column <= remainingColumn || column >= jointCheckColumn) return [];
-    const date = btpDateHeader(value, xlsx);
+    if (!remainingColumn || !unitColumn || column <= remainingColumn || column >= unitColumn) return [];
+    const date = btpDateHeader(value, xlsx, fallbackYear);
     return date ? [{ column: index, date }] : [];
   });
   if (!Object.values(columns).includes('part_no')) return [];
@@ -136,10 +185,15 @@ function parseBtpSheet(sheetName, rows, xlsx) {
     for (const field of BTP_COLUMNS) fields[field] = null;
     for (const [column, field] of Object.entries(columns)) fields[field] = normalizeValue(raw[Number(column) - 1]);
     if (!fields.part_no) continue;
-    for (const field of ['length_mm', 'design_quantity', 'received', 'remaining']) fields[field] = btpNumeric(fields[field]);
+    const notes = [...new Set(noteColumns.map((column) => normalizeValue(raw[column])).filter(Boolean))];
+    if (notes.length) fields.note = notes.join(' | ');
+    for (const field of ['length_mm', 'unit_weight', 'total_weight', 'design_quantity', 'received', 'remaining']) fields[field] = btpNumeric(fields[field]);
     if (dateColumns.length) {
       const dailyProgress = dateColumns
-        .filter(({ column }) => raw[column] !== null && raw[column] !== undefined && raw[column] !== '')
+        .filter(({ column }) => {
+          const quantity = btpNumeric(raw[column]);
+          return typeof quantity === 'number' && quantity > 0;
+        })
         .map(({ date, column }) => `${date}: ${normalizeValue(raw[column])}`)
         .join('; ');
       if (dailyProgress) fields.daily_progress = dailyProgress;
@@ -161,7 +215,7 @@ function normalizeMaterialDate(value, xlsx) {
     return validIsoDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
-    const parsed = xlsx?.SSF?.parse_date_code?.(value);
+    const parsed = parseExcelDateCode(value, xlsx);
     if (parsed?.y && parsed?.m && parsed?.d) return validIsoDate(parsed.y, parsed.m, parsed.d);
   }
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -207,7 +261,8 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
   for (const sheetName of workbook.SheetNames) {
     const name = sheetName.toLowerCase();
     const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], {
-      header: 1, raw: true, cellDates: true, defval: null, blankrows: true,
+      // Keep Excel dates as serials so receipt-day parsing is independent of the browser timezone.
+      header: 1, raw: true, cellDates: false, defval: null, blankrows: true,
     });
     if (name.startsWith('btp')) {
       btpRecords.push(...parseBtpSheet(sheetName, rows, xlsx));
@@ -269,6 +324,7 @@ export async function readMaterialWorkbook(file, projectCode, xlsx) {
     || !/^[\w.-]+PL\.xlsx$/i.test(file.name)) {
     throw new Error('Chọn file .xlsx tên kết thúc bằng PL.xlsx, dung lượng tối đa 10 MB.');
   }
-  const workbook = xlsx.read(await file.arrayBuffer(), { type: 'array', cellDates: true, bookVBA: false });
+  // Keep Excel dates as serial numbers so timezone settings cannot shift receipt dates by one day.
+  const workbook = xlsx.read(await file.arrayBuffer(), { type: 'array', cellDates: false, bookVBA: false });
   return parseMaterialWorkbook(workbook, file.name, projectCode, xlsx);
 }
