@@ -450,13 +450,11 @@ function bindPage() {
       if (!shortageRows.length) throw new Error('Không có dòng BTP còn thiếu trong bộ lọc hiện tại.');
       const report = await exportBtpShortageWorkbook({
         rows:shortageRows,
-        progressRows:state.progressData?.rows || [],
-        materialRows:state.data?.rows || [],
         projectCode:state.currentProject,
         selectedSheets,
         templateUrl:new URL('./templates/List_thieu_mau.xlsx', import.meta.url),
       });
-      message.textContent = `Đã tạo ${report.filename} · ${fmt(report.rowCount)} dòng · khớp BOM ${fmt(report.matchedBomRows)} · khớp QLDA ${fmt(report.matchedQldaRows)}.`;
+      message.textContent = `Đã tạo ${report.filename} · ${fmt(report.rowCount)} dòng BTP.`;
       message.className = 'btp-export-message success-message';
     } catch (error) {
       message.textContent = error.message;

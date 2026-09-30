@@ -373,7 +373,7 @@ test('shortage export fills the supplied template while retaining every original
     projectCode:'A290',
     now:new Date('2026-09-30T00:00:00Z'),
     selectedSheets:[{ source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1' }],
-    rows:[{ source_file:'A290PL.xlsx', source_sheet:'BTP-A290U6T1P1', source_row:31, part_no:'FRAME-01-PLATE-2', material_type:'PLATE', description:'Plate', material:'SM490', unit:'MCC', size:'PL10*200', length_mm:200, unit_weight:3, design_quantity:2, received:1, remaining:1, daily_progress:'28/09/2026: 1' }],
+    rows:[{ source_file:'A290PL.xlsx', source_sheet:'BTP-A290U6T1P1', source_row:31, part_no:'FRAME-01-PLATE-2', material_type:'PLATE', description:'Plate', material:'SM490', unit:'MCC', size:'PL10*200', length_mm:200, unit_weight:3, total_weight:6, design_quantity:2, received:1, remaining:1, daily_progress:'28/09/2026: 1; 30/09/2026: 1', status:'Còn thiếu', note:'Ghi chú riêng của dòng BTP', shortage_weight:3 }],
     materialRows:[
       { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:10, is_main:1, assembly:'FRAME-01', drawing:'D-01' },
       { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:11, is_main:0, parent:'FRAME-01', part_no:'PLATE-2', quantity:2, size:'PL10*200', description:'Plate', weight:6 },
@@ -384,12 +384,32 @@ test('shortage export fills the supplied template while retaining every original
   const workbook = xlsx.read(report.bytes, { type:'array', cellStyles:true });
   const sheet = workbook.Sheets['Bieu mau check tinh trang BTP'];
   assert.equal(report.rowCount, 1);
-  assert.equal(report.matchedBomRows, 1);
-  assert.equal(report.matchedQldaRows, 1);
   assert.equal(sheet.C4.v, 'A290');
+  assert.equal(sheet.A13.v, 1);
+  assert.equal(sheet.E13.v, 'Plate');
   assert.equal(sheet.F13.v, 'FRAME-01-PLATE-2');
-  assert.match(sheet.P13.v, /QLDA \(part-and-drawing\)/);
-  assert.match(sheet.Z13.v, /28\/09\/2026: 1/);
+  assert.equal(sheet.H13.v, 'PL10*200');
+  assert.equal(sheet.I13.v, 200);
+  assert.equal(sheet.J13.v, 'SM490');
+  assert.equal(sheet.M13.v, 2);
+  assert.equal(sheet.N13.v, 3);
+  assert.equal(sheet.O13.v, 6);
+  assert.equal(sheet.P13.v, 'Ghi chú riêng của dòng BTP');
+  assert.equal(sheet.Z13.v, '28/09/2026: 1\n30/09/2026: 1');
+  assert.equal(sheet.AB13.v, 'PLATE');
+  assert.equal(sheet.AC13.v, 'MCC');
+  assert.equal(sheet.AD13.v, 1);
+  assert.equal(sheet.AE13.v, 3);
+  assert.equal(sheet.AF13.v, 1);
+  assert.equal(sheet.AG13.v, 3);
+  assert.equal(sheet.AP13.v, 'Còn thiếu');
+  assert.equal(sheet.B13?.v, undefined, 'leave the parent drawing column empty');
+  assert.equal(sheet.C13?.v, undefined, 'leave the parent assembly column empty');
+  assert.equal(sheet.K13?.v, undefined, 'leave BOM quantity empty');
+  assert.equal(sheet.P12.v, 'Remark');
+  assert.equal(sheet.AB12.v, 'Chủng loại vật tư');
+  assert.equal(sheet.AP12.v, 'Tình trạng vật tư');
+  assert.doesNotMatch(sheet.P13.v, /BOM|QLDA|A290PL\.xlsx|FRAME-01/);
   const changedParts = Object.keys(template).filter((path) => Buffer.compare(Buffer.from(template[path]), Buffer.from(output[path])) !== 0);
   assert.deepEqual(changedParts, ['xl/worksheets/sheet2.xml'], 'only the target worksheet values should change');
   const styleBefore = new TextDecoder().decode(template['xl/worksheets/sheet2.xml']);

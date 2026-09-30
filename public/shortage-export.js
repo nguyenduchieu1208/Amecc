@@ -1,9 +1,29 @@
-import { createMaterialLinkIndexes, findProgressForAssembly, linkBtpToBom, materialSheetKey } from './material-linkage.js';
+import { materialSheetKey } from './material-linkage.js';
 import { getBtpShortageQuantity, getBtpShortageWeight } from './material-search.js';
 import { fillTemplateWorkbook } from './template-xlsx.js';
 
 const FORM_SHEET = 'Bieu mau check tinh trang BTP';
 const FIRST_DATA_ROW = 13;
+const BTP_TEMPLATE_COLUMNS = Object.freeze({
+  description:'E',
+  part_no:'F',
+  size:'H',
+  length_mm:'I',
+  material:'J',
+  design_quantity:'M',
+  unit_weight:'N',
+  total_weight:'O',
+  note:'P',
+  daily_progress:'Z',
+  remaining:'AA',
+  material_type:'AB',
+  unit:'AC',
+  received:'AD',
+  received_weight:'AE',
+  remaining_quantity:'AF',
+  remaining_weight:'AG',
+  status:'AP',
+});
 
 function receiptEvents(value) {
   return String(value ?? '').split(/\s*;\s*/).flatMap((entry) => {
@@ -30,14 +50,6 @@ export function listBtpReceiptDates(rows) {
 export function filterBtpRowsByReceiptDate(rows, selectedDate) {
   if (!selectedDate) return Array.isArray(rows) ? rows : [];
   return (Array.isArray(rows) ? rows : []).filter((row) => receiptEvents(row?.daily_progress).some((event) => event.date === selectedDate));
-}
-
-function partKey(value) {
-  return String(value ?? '').trim().toLocaleUpperCase();
-}
-
-function sourceSheetLabel(value) {
-  return String(value ?? '').replace(/^BTP[-_\s]*/i, '').trim() || String(value ?? '');
 }
 
 function selectedSheetKeys(selectedSheets) {
@@ -71,11 +83,7 @@ function reportFilename(projectCode, selectedSheets, now = new Date()) {
   return `${selectedSheetName(selectedSheets, projectCode)}_${date}.xlsx`;
 }
 
-function qldaDetails(progressRows) {
-  return progressRows.map((item) => `${item.part_no || '—'} · SL ${item.quantity ?? '—'} · U.Weight ${item.unit_weight ?? '—'} · T.Weight ${item.total_weight ?? '—'} · Profile ${item.profile || '—'} · bàn giao ${item.handover_qty ?? '—'} ${item.handover_date || ''} · nhận ${item.receiver || '—'} · dòng ${item.source_row || '—'}`);
-}
-
-export function buildBtpShortageTemplate({ templateBytes, rows, progressRows, materialRows, projectCode, selectedSheets = null, now = new Date() }) {
+export function buildBtpShortageTemplate({ templateBytes, rows, projectCode, selectedSheets = null, now = new Date() }) {
   if (!projectCode) throw new Error('Chưa xác định được mã dự án để xuất file.');
   const selected = selectedSheetKeys(selectedSheets);
   if (selected && selected.size === 0) throw new Error('Hãy chọn ít nhất một sheet để xuất List thiếu.');
@@ -90,67 +98,42 @@ export function buildBtpShortageTemplate({ templateBytes, rows, progressRows, ma
       || Number(left.source_row ?? 0) - Number(right.source_row ?? 0));
   if (!shortageRows.length) throw new Error('Không có dòng BTP còn thiếu trong các sheet đã chọn.');
 
-  const bomRows = Array.isArray(materialRows) ? materialRows : [];
-  const qldaRows = Array.isArray(progressRows) ? progressRows : [];
-  const bomIndexes = createMaterialLinkIndexes(bomRows);
   const cellValues = {
     C4:projectCode,
     C5:[...new Set(shortageRows.map((row) => String(row.unit ?? '').trim()).filter(Boolean))].sort().join(', '),
     C6:new Intl.DateTimeFormat('vi-VN').format(now),
   };
-  const matchCounts = { bom:0, qlda:0 };
   for (const [index, row] of shortageRows.entries()) {
     const rowNumber = FIRST_DATA_ROW + index;
-    const context = linkBtpToBom(row, bomRows, bomIndexes);
-    const qlda = findProgressForAssembly(context.parent, qldaRows);
-    const parentProgress = qlda.rows;
-    const bomLine = context.bomLine;
     const unitWeight = typeof row.unit_weight === 'number' ? row.unit_weight : null;
     const designQuantity = typeof row.design_quantity === 'number' ? row.design_quantity : null;
     const received = typeof row.received === 'number' ? row.received : null;
     const remaining = row.remaining;
-    const drawings = [...new Set([context.parent?.drawing, ...parentProgress.map((item) => item.drawing)]
-      .map((value) => String(value ?? '').trim()).filter(Boolean))];
-    const sourceDetails = [
-      `BOM cha: ${context.parent ? context.parent.assembly : 'Không nối được BOM'}${context.parent?.size ? ` · Kích thước: ${context.parent.size}` : ''}`,
-      context.parent ? `Nguồn BOM cha: ${context.parent.source_file} · ${context.parent.source_sheet} · dòng ${context.parent.source_row}` : '',
-      bomLine ? `BOM con: ${bomLine.part_no} · SL: ${bomLine.quantity ?? '—'} · Mô tả: ${bomLine.description || '—'} · Size: ${bomLine.size || '—'} · KL: ${bomLine.weight ?? '—'}` : 'Không tìm thấy dòng con tương ứng trong PL/BOM',
-      bomLine ? `Nguồn BOM con: ${bomLine.source_file} · ${bomLine.source_sheet} · dòng ${bomLine.source_row}` : '',
-      parentProgress.length ? `QLDA (${qlda.match}): ${qldaDetails(parentProgress).join(' | ')}` : `QLDA: Không tìm thấy cấu kiện ${context.parent?.assembly || ''} / bản vẽ ${context.parent?.drawing || ''} trong sheet Progress.`,
-      `Nguồn BTP: ${row.source_file || projectCode} · ${row.source_sheet || 'BTP'} · dòng ${row.source_row || '—'}`,
-      row.note ? `Ghi chú BTP: ${row.note}` : '',
-    ].filter(Boolean).join('\n');
     const values = {
       A:index + 1,
-      B:drawings.join(', '),
-      C:context.parent?.assembly,
-      D:row.material_type,
-      E:row.description,
-      F:row.part_no,
-      H:row.size,
-      I:row.length_mm,
-      J:row.material,
-      K:bomLine?.quantity,
-      M:designQuantity,
-      N:unitWeight,
-      O:typeof row.total_weight === 'number' ? row.total_weight : (designQuantity !== null && unitWeight !== null ? designQuantity * unitWeight : null),
-      P:sourceDetails,
-      Z:receiptEvents(row.daily_progress).map((event) => `${event.date}: ${event.quantity}`).join('\n'),
-      AA:remaining,
-      AB:row.material_type,
-      AC:row.unit,
-      AD:received,
-      AE:received !== null && unitWeight !== null ? received * unitWeight : null,
-      AF:remaining,
-      AG:row.shortage_weight,
-      AP:'Còn thiếu',
+      [BTP_TEMPLATE_COLUMNS.description]:row.description,
+      [BTP_TEMPLATE_COLUMNS.part_no]:row.part_no,
+      [BTP_TEMPLATE_COLUMNS.size]:row.size,
+      [BTP_TEMPLATE_COLUMNS.length_mm]:row.length_mm,
+      [BTP_TEMPLATE_COLUMNS.material]:row.material,
+      [BTP_TEMPLATE_COLUMNS.design_quantity]:designQuantity,
+      [BTP_TEMPLATE_COLUMNS.unit_weight]:unitWeight,
+      [BTP_TEMPLATE_COLUMNS.total_weight]:typeof row.total_weight === 'number' ? row.total_weight : (designQuantity !== null && unitWeight !== null ? designQuantity * unitWeight : null),
+      [BTP_TEMPLATE_COLUMNS.note]:row.note,
+      [BTP_TEMPLATE_COLUMNS.daily_progress]:receiptEvents(row.daily_progress).map((event) => `${event.date}: ${event.quantity}`).join('\n'),
+      [BTP_TEMPLATE_COLUMNS.remaining]:remaining,
+      [BTP_TEMPLATE_COLUMNS.material_type]:row.material_type,
+      [BTP_TEMPLATE_COLUMNS.unit]:row.unit,
+      [BTP_TEMPLATE_COLUMNS.received]:received,
+      [BTP_TEMPLATE_COLUMNS.received_weight]:received !== null && unitWeight !== null ? received * unitWeight : null,
+      [BTP_TEMPLATE_COLUMNS.remaining_quantity]:remaining,
+      [BTP_TEMPLATE_COLUMNS.remaining_weight]:row.shortage_weight,
+      [BTP_TEMPLATE_COLUMNS.status]:row.status || (remaining === 0 ? 'Đã đủ' : received > 0 ? 'Đang nhận' : 'Còn thiếu'),
     };
     for (const [column, value] of Object.entries(values)) {
       if (value === null || value === undefined || value === '') continue;
       cellValues[`${column}${rowNumber}`] = value;
     }
-    if (bomLine) matchCounts.bom += 1;
-    if (parentProgress.length) matchCounts.qlda += 1;
   }
 
   const bytes = fillTemplateWorkbook(templateBytes, FORM_SHEET, cellValues);
@@ -158,8 +141,6 @@ export function buildBtpShortageTemplate({ templateBytes, rows, progressRows, ma
     bytes,
     filename:reportFilename(projectCode, selectedSheets, now),
     rowCount:shortageRows.length,
-    matchedBomRows:matchCounts.bom,
-    matchedQldaRows:matchCounts.qlda,
   };
 }
 
