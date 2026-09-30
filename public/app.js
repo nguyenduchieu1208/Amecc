@@ -7,7 +7,7 @@ import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortag
 import { renderMaterialDashboard } from './material-dashboard.js';
 import { buildMaterialAuditRows, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 const app = document.querySelector('#app');
-const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialDashboardSheetFilter: '', page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialDashboardSheetFilter: '', page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const themes = ['light', 'midnight', 'paper'];
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
@@ -52,7 +52,7 @@ function shell() {
         <a class="nav-link ${state.page === 'overview' ? 'active' : ''}" href="#overview">${icon('overview')}<span>Tổng quan</span></a>
         <div class="nav-group ${['materials','materials-dashboard'].includes(state.page) ? 'expanded' : ''}">
           <button class="nav-parent" type="button" data-group="materials" aria-expanded="${['materials','materials-dashboard'].includes(state.page)}">${icon('materials')}<span>Quản lý vật tư</span><span class="nav-chevron">${icon('chevron')}</span></button>
-          <div class="nav-children"><a class="nav-child ${state.page === 'materials' ? 'active' : ''}" href="#materials">BOM &amp; Vật tư PL</a><a class="nav-child ${state.page === 'materials-dashboard' ? 'active' : ''}" href="#materials-dashboard">Dashboard BOM &amp; vật tư</a></div>
+          <div class="nav-children"><a class="nav-child ${state.page === 'materials-dashboard' ? 'active' : ''}" href="#materials-dashboard">Dashboard BOM &amp; vật tư</a><a class="nav-child ${state.page === 'materials' ? 'active' : ''}" href="#materials">BOM &amp; Vật tư PL</a></div>
         </div>
         <div class="nav-group ${state.page === 'projects' ? 'expanded' : ''}">
           <button class="nav-parent" type="button" data-group="projects" aria-expanded="${state.page === 'projects'}">${icon('projects')}<span>Quản lý dự án</span><span class="nav-chevron">${icon('chevron')}</span></button>
@@ -178,13 +178,58 @@ function auditReceiptEvents(row) {
   const entries = String(row?.btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean);
   return entries.length ? `<span class="audit-receipt-list">${entries.map((event) => `<span>${fmt(event.replace(/:\s*/, ' · '))}</span>`).join('')}</span>` : '<span class="muted">Chưa có ngày nhận</span>';
 }
-function auditRowMarkup(row) {
-  const btp = row.btp || {};
-  const remaining = row.btp ? getBtpShortageQuantity(row.btp) : null;
+function auditFieldMarkup(label, value, className = '') {
+  return `<div class="btp-card-field ${className}"><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
+}
+function auditBtpCardMarkup(row) {
+  const btp = row.btp;
+  if (!btp) {
+    const bomPart = row.bomLine?.part_no || row.bomLine?.description || 'Dòng BOM chưa có BTP';
+    return `<article class="btp-item-card btp-missing-card"><strong>BOM chưa có BTP</strong><span>${fmt(bomPart)}</span></article>`;
+  }
+  const remaining = getBtpShortageQuantity(btp);
   const status = btp.status || auditStatus(row);
-  return `<tr><td class="audit-frozen-btp audit-code">${fmt(btp.part_no)}</td><td>${fmt(btp.material_type)}</td><td>${fmt(btp.unit)}</td><td>${fmt(btp.size)}</td>
-    <td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td>
-    <td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${fmt(btp.joint_check)}</td><td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
+  return `<article class="btp-item-card">
+    <div class="btp-item-code"><span>Mã BTP (Chi tiết)</span><strong class="audit-code">${fmt(btp.part_no)}</strong></div>
+    <dl class="btp-card-fields">
+      ${auditFieldMarkup('Chủng loại',fmt(btp.material_type))}
+      ${auditFieldMarkup('DVG',fmt(btp.unit))}
+      ${auditFieldMarkup('Quy cách (Size)',fmt(btp.size))}
+      ${auditFieldMarkup('Chiều dài (mm)',fmt(btp.length_mm),'numeric-cell')}
+      ${auditFieldMarkup('SL thiết kế',fmt(btp.design_quantity),'numeric-cell')}
+      ${auditFieldMarkup('Đã nhận',fmt(btp.received),'numeric-cell')}
+      ${auditFieldMarkup('Còn thiếu',fmt(remaining),`numeric-cell ${remaining > 0 ? 'shortage-value' : ''}`)}
+      ${auditFieldMarkup('Tiến độ theo ngày',auditReceiptEvents(row),'btp-card-dates')}
+      ${auditFieldMarkup('Ktra nối',fmt(btp.joint_check))}
+      ${auditFieldMarkup('Trạng thái',`<span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span>`)}
+      ${auditFieldMarkup('Ghi chú',fmt(btp.note || ''),'btp-card-note')}
+    </dl>
+  </article>`;
+}
+function auditBomGroups(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const parent = row.bomParent;
+    const sheet = materialSheetName(row.btp_source_sheet || row.source_sheet);
+    const groupKey = parent?.assembly
+      ? `${row.bom_source_file || parent.source_file || row.source_file}|${materialSheetName(parent.source_sheet || row.source_sheet)}|${parent.assembly}`
+      : `${row.btp_source_file || row.source_file}|${sheet}|unlinked|${row.btp?.part_no || row.bomLine?.part_no || row.bomLine?.source_row || ''}`;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey).push(row);
+  }
+  return [...groups.values()];
+}
+function auditBomGroupMarkup(rows) {
+  const first = rows[0];
+  const parent = first?.bomParent;
+  const sheet = materialSheetName(first?.btp_source_sheet || parent?.source_sheet || first?.source_sheet);
+  const assembly = parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
+  const drawing = parent?.drawing ? `Bản vẽ: ${fmt(parent.drawing)} · ` : '';
+  const btpCount = rows.filter((row) => row.btp).length;
+  return `<section class="bom-btp-group">
+    <header class="bom-btp-group-heading"><div><span class="eyebrow">BOM · CẤU KIỆN</span><h4>${fmt(assembly)}</h4><p>${drawing}Sheet: ${fmt(sheet)}</p></div><span class="count-chip">Gồm ${fmt(btpCount)} BTP con</span></header>
+    <div class="bom-btp-card-list">${rows.map(auditBtpCardMarkup).join('')}</div>
+  </section>`;
 }
 function materialAuditRows() {
   return buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:state.btpData?.rows || [], progressRows:state.progressData?.rows || [] });
@@ -205,6 +250,7 @@ function filteredMaterialAuditRows({ rows = materialAuditRows(), options = audit
   return rows.filter((row) => {
     if (!auditRowMatchesSheets(row, selected)) return false;
     if (state.materialReceiptDateFilter && (!row.btp || !filterBtpRowsByReceiptDate([row.btp], state.materialReceiptDateFilter).length)) return false;
+    if (state.materialUnitFilter && String(row.btp?.unit ?? '').trim() !== state.materialUnitFilter) return false;
     const status = auditStatus(row);
     if (state.materialStatusFilter === 'shortage' && !(getBtpShortageQuantity(row.btp) > 0)) return false;
     if (state.materialStatusFilter === 'received' && !(Number(row.btp?.received) > 0)) return false;
@@ -221,6 +267,9 @@ function materialsAuditPage() {
   const options = auditSheetOptions();
   const selected = auditSelectedKeys(options);
   const visibleRows = filteredMaterialAuditRows({ options });
+  const selectedBtpRows = (state.btpData?.rows || []).filter((row) => selected.has(materialSheetKey(row.source_file, row.source_sheet)));
+  const deliveryUnits = [...new Set(selectedBtpRows.map((row) => String(row.unit ?? '').trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, 'vi', { numeric:true, sensitivity:'base' }));
   const shortageCount = visibleRows.filter((row) => row.btp && getBtpShortageQuantity(row.btp) > 0).length;
   const unmatchedCount = visibleRows.filter((row) => row.bomStatus !== 'matched' || row.qldaStatus !== 'matched').length;
   const pageSize = 100;
@@ -228,6 +277,7 @@ function materialsAuditPage() {
   state.materialPageIndex = Math.min(Math.max(0, state.materialPageIndex), pageCount - 1);
   const pageIndex = state.materialPageIndex;
   const pageRows = visibleRows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  const pageGroups = auditBomGroups(pageRows);
   const allSelected = options.length > 0 && selected.size === options.length;
   const sheetOptionsMarkup = options.map((option) => `<label class="sheet-check-option"><input type="checkbox" data-material-sheet value="${esc(option.key)}" ${selected.has(option.key) ? 'checked' : ''}><span>${esc(option.source_sheet)}</span><small>${esc(option.source_file)}</small></label>`).join('');
   const selectedLabel = allSelected ? `Tất cả sheet (${options.length})` : `${selected.size}/${options.length} sheet`;
@@ -235,11 +285,13 @@ function materialsAuditPage() {
   const project = state.projects.find((item) => item.code === state.currentProject);
   const filename = state.btpData?.rows?.[0]?.source_file || state.data?.rows?.[0]?.source_file || `${state.currentProject}PL.xlsx`;
   const qldaFilename = state.progressData?.rows?.[0]?.source_file || `${state.currentProject}.xlsx`;
-  return `${heading('MATERIAL CONTROL · BOM / BTP / QLDA','BOM & Vật tư PL','Đối chiếu BOM, BTP và tiến độ QLDA theo tên file dự án; tất cả ngày nhận được giữ lại để kiểm tra.',projectSelect())}
+  return `${heading('MATERIAL CONTROL · BOM / BTP / QLDA','BOM & Vật tư PL','Đối chiếu BOM, BTP và tiến độ QLDA theo tên file dự án; tất cả ngày nhận được giữ lại để kiểm tra.')}
     <section class="material-audit-controls" aria-label="Lọc và xuất dữ liệu BOM, BTP">
       <div class="audit-filter-grid">
+        ${projectSelect()}
         <label class="filter-label">Sheet BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
         <label class="filter-label">Ngày nhận<div class="date-filter-control"><input type="date" id="materialReceiptDateFilter" value="${esc(state.materialReceiptDateFilter)}" aria-label="Chọn hoặc nhập ngày nhận" title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp">${state.materialReceiptDateFilter ? '<button class="date-filter-clear" id="clearMaterialReceiptDate" type="button" title="Xem tất cả ngày">Xóa</button>' : ''}</div></label>
+        <label class="filter-label">Đơn vị giao<select id="materialUnitFilter"><option value="" ${state.materialUnitFilter ? '' : 'selected'}>Tất cả đơn vị</option>${deliveryUnits.map((unit) => `<option value="${esc(unit)}" ${state.materialUnitFilter === unit ? 'selected' : ''}>${esc(unit)}</option>`).join('')}</select></label>
         <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
         <label class="search-box audit-search">${icon('search')}<input id="materialSearch" placeholder="Tìm mã BTP, chủng loại, DVG, size, ghi chú…" value="${esc(state.materialSearch)}"></label>
         <button class="button primary audit-export-button" id="exportBtpShortage" type="button" ${shortageCount ? '' : 'disabled'}>${icon('download')}<span>Xuất List thiếu</span></button>
@@ -247,8 +299,8 @@ function materialsAuditPage() {
       <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
     </section>
     <div class="stats-grid compact audit-stats">${statCard('Dòng đối chiếu',visibleRows.length,'Theo sheet, ngày, trạng thái và từ khóa')}${statCard('Dòng BTP còn thiếu',shortageCount,'Được đưa vào List thiếu','red')}${statCard('BOM chưa có BTP',visibleRows.filter((row) => row.kind === 'bom-only').length,'Kiểm tra phần chưa được lập BTP','gold')}${statCard('Liên kết cần xem',unmatchedCount,'BOM hoặc QLDA chưa khớp','blue')}</div>
-    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>Bảng thông tin BTP <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${pageIndex * pageSize + (visibleRows.length ? 1 : 0)}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ${visibleRows.length}</span></div>
-    <div class="table-frame material-audit-table-frame"><table class="data-table material-audit-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${pageRows.map(auditRowMarkup).join('') || '<tr><td colspan="12" class="btp-empty-row">Không có dòng phù hợp. Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</td></tr>'}</tbody></table></div>
+    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${pageIndex * pageSize + (visibleRows.length ? 1 : 0)}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ${visibleRows.length}</span></div>
+    <div class="bom-btp-groups">${pageGroups.map(auditBomGroupMarkup).join('') || '<div class="empty-state"><strong>Không có dòng phù hợp</strong><p>Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</p></div>'}</div>
     <div class="btp-pagination"><span>${visibleRows.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ` : ''}${fmt(visibleRows.length)} dòng</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
     ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;
 }
@@ -350,6 +402,7 @@ function bindPage() {
     state.currentProject = event.target.value;
     state.materialSelectedSheets = null;
     state.materialReceiptDateFilter = '';
+    state.materialUnitFilter = '';
     state.materialStatusFilter = '';
     state.materialSearch = '';
     state.materialPageIndex = 0;
@@ -383,12 +436,14 @@ function bindPage() {
     state.materialSelectedSheets = checked.length === options.length ? null : checked;
     state.materialPageIndex = 0;
     state.materialReceiptDateFilter = '';
+    state.materialUnitFilter = '';
     rerenderAudit({ keepDropdown:true });
   }));
   document.querySelector('[data-material-sheet-all]')?.addEventListener('change', (event) => {
     state.materialSelectedSheets = event.currentTarget.checked ? null : [];
     state.materialPageIndex = 0;
     state.materialReceiptDateFilter = '';
+    state.materialUnitFilter = '';
     rerenderAudit({ keepDropdown:true });
   });
   document.querySelector('#materialReceiptDateFilter')?.addEventListener('change', (event) => {
@@ -403,6 +458,11 @@ function bindPage() {
   });
   document.querySelector('#materialStatusFilter')?.addEventListener('change', (event) => {
     state.materialStatusFilter = event.currentTarget.value;
+    state.materialPageIndex = 0;
+    rerenderAudit();
+  });
+  document.querySelector('#materialUnitFilter')?.addEventListener('change', (event) => {
+    state.materialUnitFilter = event.currentTarget.value;
     state.materialPageIndex = 0;
     rerenderAudit();
   });
@@ -455,6 +515,7 @@ function bindPage() {
     if (state.currentProject !== link.dataset.project) {
       state.materialSelectedSheets = null;
       state.materialReceiptDateFilter = '';
+      state.materialUnitFilter = '';
       state.materialStatusFilter = '';
       state.materialSearch = '';
       state.materialDashboardSheetFilter = '';

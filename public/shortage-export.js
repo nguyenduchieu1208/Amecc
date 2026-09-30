@@ -1,10 +1,12 @@
-import { materialSheetKey } from './material-linkage.js';
+import { materialSheetKey, materialSheetName } from './material-linkage.js';
 import { getBtpShortageQuantity, getBtpShortageWeight } from './material-search.js';
 import { fillTemplateWorkbook } from './template-xlsx.js';
 
 const FORM_SHEET = 'Bieu mau check tinh trang BTP';
 const FIRST_DATA_ROW = 14;
 const BTP_TEMPLATE_COLUMNS = Object.freeze({
+  category:'D',
+  description:'E',
   part_no:'F',
   size:'H',
   length_mm:'I',
@@ -119,6 +121,8 @@ export function buildBtpShortageTemplate({ templateBytes, rows, projectCode, sel
     const remaining = row.remaining;
     const values = {
       A:index + 1,
+      [BTP_TEMPLATE_COLUMNS.category]:materialSheetName(row.source_sheet),
+      [BTP_TEMPLATE_COLUMNS.description]:row.description,
       [BTP_TEMPLATE_COLUMNS.part_no]:row.part_no,
       [BTP_TEMPLATE_COLUMNS.size]:row.size,
       [BTP_TEMPLATE_COLUMNS.length_mm]:row.length_mm,
