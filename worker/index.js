@@ -330,7 +330,7 @@ async function logout(request, env) {
 
 async function listProjects(env) {
   const { results } = await env.DB.prepare(
-    `SELECT p.code, p.name, p.updated_at,
+    `SELECT p.code, p.name, p.source_file, p.updated_at,
       (SELECT COUNT(*) FROM materials m WHERE m.project_code = p.code) AS material_rows,
       (SELECT COUNT(*) FROM btp_materials b WHERE b.project_code = p.code) AS btp_rows,
       (SELECT COUNT(*) FROM project_progress q WHERE q.project_code = p.code) AS progress_rows

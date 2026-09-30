@@ -8,6 +8,10 @@ import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js
 import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch, summarizeBtpShortages } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 import { renderMaterialDashboard } from '../public/material-dashboard.js';
+import { buildMaterialAuditRows, linkBtpToBom, findProgressForAssembly } from '../public/material-linkage.js';
+import { buildBtpShortageTemplate } from '../public/shortage-export.js';
+import { fillTemplateWorkbook } from '../public/template-xlsx.js';
+import { unzipSync } from '../public/vendor/fflate.mjs';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(__test__.safeProjectCode(' a290 '), 'A290');
@@ -137,31 +141,32 @@ test('material shortage report quantity prefers remaining and falls back to requ
   assert.equal(getMaterialShortageQuantity({ quantity:10 }), null);
 });
 
-test('BTP separates date lookup from its one-table workspace and keeps filters and export above the table', async () => {
+test('BOM, BTP and QLDA share one audit table, with Dashboard as a separate material sidebar tab', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync('public/app.js', 'utf8');
   const styles = readFileSync('public/styles.css', 'utf8');
-  const btpStart = app.indexOf('function btpPage()');
-  const btpEnd = app.indexOf('function projectsPage()', btpStart);
-  const btpPage = app.slice(btpStart, btpEnd);
-  assert.ok(btpStart >= 0 && btpEnd > btpStart, 'BTP must have its own render function');
-  assert.equal((btpPage.match(/<table\b/g) || []).length, 1, 'BTP should render one combined audit table');
+  const auditStart = app.indexOf('function materialsAuditPage()');
+  const auditEnd = app.indexOf('function materialDashboardPage()', auditStart);
+  const auditPage = app.slice(auditStart, auditEnd);
+  assert.ok(auditStart >= 0 && auditEnd > auditStart, 'BOM/BTP audit table must be the materials view');
+  assert.equal((auditPage.match(/<table\b/g) || []).length, 1, 'BOM/BTP should render one combined audit table');
   assert.match(app, /class="sidebar-settings"[\s\S]*?id="themeSelect"/);
   assert.match(app, /id="sidebarCollapse"/);
   assert.match(styles, /@media\(max-width:820px\)\{\.shell\.sidebar-collapsed \.sidebar\{width:min\(290px,86vw\);min-width:min\(290px,86vw\)/);
   assert.match(styles, /\.shell\.sidebar-collapsed \.main-area\{margin-left:0\}/);
   assert.match(styles, /@media\(min-width:821px\)\{\.shell\.sidebar-collapsed \.nav-group\.expanded \.nav-children\{display:none\}\}/);
-  assert.match(app, /href="#btp">Bán thành phẩm/);
-  assert.match(app, /href="#btp-dates">Theo ngày/);
-  assert.match(app, /state\.page === 'btp-dates' \? btpPage\(\)/);
-  assert.match(btpPage, /const dateView = state\.page === 'btp-dates'/);
-  assert.match(btpPage, /id="btpSheetFilter"[\s\S]*dateView \? '<label class="filter-label material-sheet-select">Ngày nhận<select id="btpReceiptDateFilter"[\s\S]*id="btpStatusFilter"[\s\S]*id="btpSearch"[\s\S]*id="exportBtpShortage"/);
-  assert.ok(btpPage.indexOf('id="exportBtpShortage"') < btpPage.indexOf('<table'));
-  assert.match(btpPage, /Cấu kiện BOM[\s\S]*Mã BOM[\s\S]*Mã BTP \(chi tiết\)[\s\S]*Tiến độ theo ngày/);
-  assert.match(btpPage, /state\.btpData\?\.rows/);
-  assert.match(styles, /\.btp-control-bar\{position:sticky;top:82px/);
-  assert.match(styles, /\.btp-unified-table tbody td:nth-child\(1\)\{position:sticky;left:0/);
-  assert.match(app, /state\.page === 'btp' \? btpPage\(\)/);
+  assert.match(app, /href="#materials-dashboard">Dashboard BOM &amp; vật tư/);
+  assert.doesNotMatch(app, /href="#btp(?:-dates)?"/);
+  assert.match(app, /<input type="checkbox" data-material-sheet/);
+  assert.match(auditPage, /id="materialReceiptDateFilter"[\s\S]*id="materialStatusFilter"[\s\S]*id="materialSearch"[\s\S]*id="exportBtpShortage"/);
+  assert.ok(auditPage.indexOf('id="exportBtpShortage"') < auditPage.indexOf('<table'));
+  assert.match(auditPage, /Mã BOM[\s\S]*Mã BTP[\s\S]*Tất cả ngày nhận[\s\S]*Nối QLDA/);
+  assert.match(auditPage, /state\.progressData\?\.rows/);
+  assert.match(styles, /\.material-audit-controls\{position:sticky;top:82px/);
+  assert.match(styles, /\.material-audit-table tbody td:first-child\{position:sticky;left:0/);
+  assert.match(app, /state\.page === 'materials-dashboard' \? materialDashboardPage\(\)/);
+  assert.doesNotMatch(app, /\['overview','materials','btp','btp-dates','projects'\]/);
+  assert.match(app, /projectFilenameLabel\(project\)/);
   assert.match(app, /localeCompare\(String\(right\.code\), 'vi', \{ numeric:true, sensitivity:'base' \}\)/);
   assert.match(app, /\[\.\.\.state\.projects\]\.sort\(\(left, right\) => String\(left\.code\)\.localeCompare\(String\(right\.code\)/);
 });
@@ -192,8 +197,9 @@ test('A290 6HH-43 uses the date on its receipt record as the displayed receipt d
   assert.equal(btpRows[0].received, 1);
   assert.equal(btpRows[0].remaining, 0);
   assert.equal(materialRow.delivery_date, '2026-05-21', 'the date recorded on the receipt/issue record is the receipt date');
-  assert.match(app, /Ngày nhận: \$\{fmt\(receiptDate\)\}/);
-  assert.match(app, /getMaterialReceiptDate\(group\)/);
+  assert.match(app, /function auditReceiptEvents\(row\)/);
+  assert.match(app, /row\?\.btp\?\.daily_progress/);
+  assert.match(app, /listBtpReceiptDates\(btpRows\)/);
   assert.doesNotMatch(app, /Ngày phát hành:/);
 });
 
@@ -327,8 +333,9 @@ test('actual A290 workbook parses to a compact approved-field JSON payload', { s
   const { readFileSync } = await import('node:fs');
   const workbook = xlsx.read(readFileSync('Data/A290PL.xlsx'), { type:'buffer', cellDates:true, bookVBA:false });
   const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', xlsx);
-  assert.equal(payload.records.length, 12698);
+  assert.equal(payload.records.length, 12688);
   assert.ok(payload.btp_records.length > 10000);
+  assert.equal(payload.records.some((row) => row.source_row === 9 && String(row.part_no).startsWith('5A')), false, 'column index headings are not material rows');
   assert.ok(payload.records.some((row) => row.is_main === 1));
   const receiptRecord = payload.records.find((row) => row.part_no === '6HH-43');
   assert.equal(receiptRecord?.received, 1);
@@ -337,6 +344,61 @@ test('actual A290 workbook parses to a compact approved-field JSON payload', { s
   assert.ok(payload.btp_records.every((row) => !Object.hasOwn(row, 'issue_date') && !Object.hasOwn(row, 'date_issue')));
   assert.ok(Buffer.byteLength(JSON.stringify(payload)) < 10 * 1024 * 1024);
   assert.equal(Object.hasOwn(payload.records[0], 'project_code'), false);
+});
+
+test('material audit links BTP child codes to BOM across separate source files and joins QLDA conservatively', () => {
+  const materials = [
+    { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:10, is_main:1, assembly:'FRAME-01', drawing:'D-01' },
+    { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:11, is_main:0, parent:'FRAME-01', part_no:'PLATE-2', quantity:2, size:'PL10*200' },
+  ];
+  const btp = { source_file:'BTP-Source.xlsx', source_sheet:'BTP-A290U6T1P1', source_row:31, part_no:'FRAME-01-PLATE-2', design_quantity:2, received:1, remaining:1 };
+  const progress = [{ source_file:'A290.xlsx', source_sheet:'Progress', source_row:4, part_no:'FRAME-01', drawing:'D-01', quantity:2, receiver:'MCC' }];
+  const linkage = linkBtpToBom(btp, materials);
+  assert.equal(linkage.parent.assembly, 'FRAME-01');
+  assert.equal(linkage.bomLine.part_no, 'PLATE-2');
+  assert.equal(linkage.bomMatch, 'file-and-sheet', 'the child BOM row must resolve inside its PL file and sheet after the parent is found by sheet name');
+  assert.equal(findProgressForAssembly(linkage.parent, progress).match, 'part-and-drawing');
+  const audit = buildMaterialAuditRows({ materialRows:materials, btpRows:[btp], progressRows:progress });
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].bomStatus, 'matched');
+  assert.equal(audit[0].qldaStatus, 'matched');
+});
+
+test('shortage export fills the supplied template while retaining every original workbook part and cell style', async () => {
+  const { readFileSync } = await import('node:fs');
+  const templateBytes = new Uint8Array(readFileSync('public/templates/List_thieu_mau.xlsx'));
+  const template = unzipSync(templateBytes);
+  const report = buildBtpShortageTemplate({
+    templateBytes,
+    projectCode:'A290',
+    now:new Date('2026-09-30T00:00:00Z'),
+    selectedSheets:[{ source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1' }],
+    rows:[{ source_file:'A290PL.xlsx', source_sheet:'BTP-A290U6T1P1', source_row:31, part_no:'FRAME-01-PLATE-2', material_type:'PLATE', description:'Plate', material:'SM490', unit:'MCC', size:'PL10*200', length_mm:200, unit_weight:3, design_quantity:2, received:1, remaining:1, daily_progress:'28/09/2026: 1' }],
+    materialRows:[
+      { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:10, is_main:1, assembly:'FRAME-01', drawing:'D-01' },
+      { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:11, is_main:0, parent:'FRAME-01', part_no:'PLATE-2', quantity:2, size:'PL10*200', description:'Plate', weight:6 },
+    ],
+    progressRows:[{ source_file:'A290.xlsx', source_sheet:'Progress', source_row:4, part_no:'FRAME-01', drawing:'D-01', quantity:2, receiver:'MCC' }],
+  });
+  const output = unzipSync(report.bytes);
+  const workbook = xlsx.read(report.bytes, { type:'array', cellStyles:true });
+  const sheet = workbook.Sheets['Bieu mau check tinh trang BTP'];
+  assert.equal(report.rowCount, 1);
+  assert.equal(report.matchedBomRows, 1);
+  assert.equal(report.matchedQldaRows, 1);
+  assert.equal(sheet.C4.v, 'A290');
+  assert.equal(sheet.F13.v, 'FRAME-01-PLATE-2');
+  assert.match(sheet.P13.v, /QLDA \(part-and-drawing\)/);
+  assert.match(sheet.Z13.v, /28\/09\/2026: 1/);
+  const changedParts = Object.keys(template).filter((path) => Buffer.compare(Buffer.from(template[path]), Buffer.from(output[path])) !== 0);
+  assert.deepEqual(changedParts, ['xl/worksheets/sheet2.xml'], 'only the target worksheet values should change');
+  const styleBefore = new TextDecoder().decode(template['xl/worksheets/sheet2.xml']);
+  const styleAfter = new TextDecoder().decode(output['xl/worksheets/sheet2.xml']);
+  assert.equal(styleBefore.match(/<c\b[^>]*\br="F13"[^>]*\bs="([^"]+)"/)?.[1], styleAfter.match(/<c\b[^>]*\br="F13"[^>]*\bs="([^"]+)"/)?.[1]);
+  assert.deepEqual(Buffer.from(template['xl/styles.xml']), Buffer.from(output['xl/styles.xml']));
+  const longList = unzipSync(fillTemplateWorkbook(templateBytes, 'Bieu mau check tinh trang BTP', { A600:'Line 588' }));
+  assert.match(new TextDecoder().decode(longList['xl/worksheets/sheet2.xml']), /<autoFilter ref="A13:AQ600"/);
+  assert.match(new TextDecoder().decode(longList['xl/workbook.xml']), /\$A\$13:\$AQ\$600/);
 });
 
 test('actual A320 workbook preserves the receipt date for SDM_A5C_1-1A_P4', { skip: !existsSync('Data/A320PL.xlsx') }, async () => {

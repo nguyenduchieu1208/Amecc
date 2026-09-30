@@ -255,6 +255,17 @@ function normalizePartNumber(sheet, rowIndex, value, xlsx) {
   return normalizeValue(value);
 }
 
+function isColumnReferenceRow(raw, fields, rowIndex, headerIndex, symbolColumn) {
+  if (rowIndex !== headerIndex + 1 || String(raw?.[0] ?? '').trim() !== '1') return false;
+  const referenceValue = (value) => /^\d{1,2}$/.test(String(value ?? '').trim());
+  const referenceCount = [fields.drawing, fields.assembly, fields.description, fields.size, fields.quantity, fields.weight]
+    .filter(referenceValue).length;
+  const partNoHeading = /^\d{1,2}[A-Z](?:\s|\(|$)/i.test(String(fields.part_no ?? '').trim());
+  const marker = String(raw?.[symbolColumn] ?? '').trim().toLocaleLowerCase();
+  const hasMainMarker = ['x', '×', '✓', 'yes', 'true'].includes(marker);
+  return !hasMainMarker && partNoHeading && referenceCount >= 4;
+}
+
 export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
   const records = [];
   const btpRecords = [];
@@ -297,6 +308,7 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
       fields.delivery_date = receiptDates || (sourceColumns.deliveryDate
         ? normalizeMaterialDate(raw[sourceColumns.deliveryDate - 1], xlsx)
         : null);
+      if (isColumnReferenceRow(raw, fields, rowIndex, headerIndex, symbolColumn)) continue;
       if (![fields.drawing, fields.assembly, fields.part_no, fields.description]
         .some((item) => item !== null && item !== undefined)) continue;
       if (typeof fields.drawing === 'number') continue;

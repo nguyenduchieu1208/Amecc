@@ -1,19 +1,18 @@
 const API_BASE = String(window.AMECC_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
 const ADMIN_MODE = /(?:^|\/)admin\.html$/.test(window.location.pathname);
 import { projectCodeFromFilename, readMaterialWorkbook } from './material-import.js';
-import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch } from './material-search.js';
-import { formatMaterialDate, getMaterialReceiptDate } from './material-display.js';
+import { getBtpShortageQuantity, getBtpShortageWeight } from './material-search.js';
+import { formatMaterialDate } from './material-display.js';
 import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate, listBtpReceiptDates } from './shortage-export.js';
 import { renderMaterialDashboard } from './material-dashboard.js';
+import { buildMaterialAuditRows, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 const app = document.querySelector('#app');
-const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSheetFilter: '', materialStatusFilter: '', materialCardsExpanded: null, btpSheetFilter: '', btpReceiptDateFilter: '', btpStatusFilter: '', btpSearch: '', btpPageIndex: 0, page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialDashboardSheetFilter: '', page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const themes = ['light', 'midnight', 'paper'];
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
 const progressColumns = ['item','mh','wo_date','product_type','classification','allocation','drawing','part_no','size','quantity','unit_weight','total_weight','profile','item_id','note','fitup_date','fitup_qty','fitup_weight','welding_date','welding_qty','welding_weight','trial_assembly_date','trial_assembly_qty','trial_assembly_weight','acceptance_date','acceptance_qty','acceptance_weight','handover_date','handover_qty','handover_weight','receiver','record_no'];
-const materialColumns = ['drawing','description','part_no','size','quantity','weight','received','remaining','delivery_date','status'];
-const materialShortageColumns = ['source_file','source_sheet','assembly','drawing','part_no','description','size','quantity','received','remaining','delivery_date','status'];
 function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]); }
 function fmt(value) {
   if (value === null || value === undefined || value === '') return '—';
@@ -43,7 +42,7 @@ async function api(path, options = {}) {
   if (!response.ok) throw new Error(data.error || 'Không thể hoàn thành yêu cầu.');
   return data;
 }
-function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', btp:'Bán thành phẩm', 'btp-dates':'Theo ngày', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
+function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
 function shell() {
   const isAdmin = state.user?.role === 'admin';
   const navigation = ADMIN_MODE
@@ -51,9 +50,9 @@ function shell() {
     : `<div class="nav-label">KHÔNG GIAN LÀM VIỆC</div>
       <nav class="nav-list" aria-label="Điều hướng chính">
         <a class="nav-link ${state.page === 'overview' ? 'active' : ''}" href="#overview">${icon('overview')}<span>Tổng quan</span></a>
-        <div class="nav-group ${['materials','btp','btp-dates'].includes(state.page) ? 'expanded' : ''}">
-          <button class="nav-parent" type="button" data-group="materials" aria-expanded="${['materials','btp','btp-dates'].includes(state.page)}">${icon('materials')}<span>Quản lý vật tư</span><span class="nav-chevron">${icon('chevron')}</span></button>
-          <div class="nav-children"><a class="nav-child ${state.page === 'materials' ? 'active' : ''}" href="#materials">BOM &amp; Vật tư PL</a><a class="nav-child ${state.page === 'btp' ? 'active' : ''}" href="#btp">Bán thành phẩm</a><a class="nav-child ${state.page === 'btp-dates' ? 'active' : ''}" href="#btp-dates">Theo ngày</a></div>
+        <div class="nav-group ${['materials','materials-dashboard'].includes(state.page) ? 'expanded' : ''}">
+          <button class="nav-parent" type="button" data-group="materials" aria-expanded="${['materials','materials-dashboard'].includes(state.page)}">${icon('materials')}<span>Quản lý vật tư</span><span class="nav-chevron">${icon('chevron')}</span></button>
+          <div class="nav-children"><a class="nav-child ${state.page === 'materials' ? 'active' : ''}" href="#materials">BOM &amp; Vật tư PL</a><a class="nav-child ${state.page === 'materials-dashboard' ? 'active' : ''}" href="#materials-dashboard">Dashboard BOM &amp; vật tư</a></div>
         </div>
         <div class="nav-group ${state.page === 'projects' ? 'expanded' : ''}">
           <button class="nav-parent" type="button" data-group="projects" aria-expanded="${state.page === 'projects'}">${icon('projects')}<span>Quản lý dự án</span><span class="nav-chevron">${icon('chevron')}</span></button>
@@ -131,9 +130,11 @@ function tableMarkup(rows, columns, options = {}) {
   const visibleRows = rows.slice(0, options.limit || 500);
   return `<div class="table-frame"><table class="data-table"><thead><tr>${columns.map((key) => `<th>${esc(labels[key] || key)}</th>`).join('')}</tr></thead><tbody>${visibleRows.map((row) => `<tr>${columns.map((key) => `<td>${key === 'status' ? `<span class="status-pill ${String(row.status || '').toLocaleLowerCase() === 'đủ' ? 'success' : ['chưa đủ','chưa có','còn thiếu'].includes(String(row.status || '').toLocaleLowerCase()) ? 'warning' : 'neutral'}">${fmt(row[key])}</span>` : key === 'delivery_date' ? fmt(formatMaterialDate(row[key])) : options.search && ['assembly','drawing','description','part_no','source_sheet'].includes(key) ? highlightMatch(row[key], options.search) : fmt(row[key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${rows.length > visibleRows.length ? `<p class="table-note">Đang hiển thị ${visibleRows.length} / ${rows.length} dòng. Hãy dùng bộ lọc để thu hẹp kết quả.</p>` : ''}`;
 }
-function projectSelect() { const projects = [...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })); return `<label class="filter-label">Dự án<select id="projectFilter"><option value="">Chọn dự án</option>${projects.map((project) => `<option value="${esc(project.code)}" ${state.currentProject === project.code ? 'selected' : ''}>${esc(project.code)} · ${esc(project.name)}</option>`).join('')}</select></label>`; }
-function btpKey(value) { return String(value ?? '').trim().toLocaleUpperCase(); }
-function btpSheetBase(value) { return String(value ?? '').replace(/^BTP[-_\s]*/i, '').toLocaleUpperCase(); }
+function projectFilenameLabel(project) {
+  const filename = String(project?.source_file || `${project?.code || ''}.xlsx`).trim();
+  return filename.replace(/(?:PL)?\.xlsx$/i, '') || project?.code || '';
+}
+function projectSelect() { const projects = [...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })); return `<label class="filter-label">Dự án<select id="projectFilter"><option value="">Chọn dự án</option>${projects.map((project) => `<option value="${esc(project.code)}" ${state.currentProject === project.code ? 'selected' : ''}>${esc(projectFilenameLabel(project))}</option>`).join('')}</select></label>`; }
 function btpReceivedQuantity(row) {
   if (typeof row.received === 'number') return Math.max(0, row.received);
   const remaining = getBtpShortageQuantity(row);
@@ -146,199 +147,141 @@ function overviewPage() {
     <section class="welcome-banner"><div><span class="banner-label">XIN CHÀO, ${esc(state.user.username.toUpperCase())}</span><h3>Điều hành dự án<br><em>trên một không gian duy nhất.</em></h3><p>Dữ liệu được phân quyền theo tài khoản và cập nhật từ workbook AMECC.</p></div><div class="banner-mark">A<span>.</span></div></section>
     <div class="stats-grid">${statCard('Dự án đang quản lý',state.projects.length,'Dự án có dữ liệu đã nhập','blue')}${statCard('Dòng dữ liệu vật tư',materialCount,'Đọc từ workbook PL','red')}${statCard('Dòng tiến độ dự án',progressCount,'Đọc từ sheet Progress QLDA','green')}${statCard('Quyền truy cập',state.user.role === 'admin' ? 'Admin' : 'Viewer','Tài khoản hiện tại', 'gold')}</div>
     <div class="section-heading"><div><span class="eyebrow">PROJECT PORTFOLIO</span><h3>Danh mục dự án</h3></div><span class="count-chip">${state.projects.length} dự án</span></div>
-    ${state.projects.length ? `<div class="project-grid">${[...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })).map((project) => `<article class="project-card"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">PROJECT CODE</span><h4>${esc(project.code)}</h4><p>${esc(project.name)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions"><a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a><a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a></div></article>`).join('')}</div>` : '<div class="empty-state"><strong>Chưa có dữ liệu dự án</strong><p>Admin cần đăng nhập và nhập workbook PL/QLDA để bắt đầu.</p></div>'}`;
+    ${state.projects.length ? `<div class="project-grid">${[...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })).map((project) => `<article class="project-card"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">TÊN TỪ FILE NGUỒN</span><h4>${esc(projectFilenameLabel(project))}</h4><p>Mã dự án: ${esc(project.code)} · ${esc(project.source_file || `${project.code}.xlsx`)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions"><a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a><a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a></div></article>`).join('')}</div>` : '<div class="empty-state"><strong>Chưa có dữ liệu dự án</strong><p>Admin cần đăng nhập và nhập workbook PL/QLDA để bắt đầu.</p></div>'}`;
 }
-function materialsPage() {
-  const allRows = state.data?.rows || [];
-  const selectedSheet = state.materialSheetFilter ? JSON.parse(state.materialSheetFilter) : null;
-  const dashboardRows = (state.btpData?.rows || []).filter((row) => !selectedSheet
-    || (btpKey(row.source_file) === btpKey(selectedSheet[0]) && btpSheetBase(row.source_sheet) === btpSheetBase(selectedSheet[1])));
-  const dashboardScope = selectedSheet ? `${selectedSheet[0]} · ${selectedSheet[1]}` : 'Toàn bộ sheet của dự án';
-  const sheetOptions = [...new Map(allRows
-    .filter((row) => row.source_file && row.source_sheet)
-    .map((row) => [JSON.stringify([row.source_file, row.source_sheet]), { source_file:row.source_file, source_sheet:row.source_sheet }])).values()]
-    .sort((left, right) => left.source_file.localeCompare(right.source_file, 'vi', { numeric:true, sensitivity:'base' }) || left.source_sheet.localeCompare(right.source_sheet, 'vi', { numeric:true, sensitivity:'base' }));
-  const rows = filterMaterialRowsBySheet(allRows, state.materialSheetFilter);
-  const incompleteOnly = state.materialStatusFilter === 'incomplete';
-  const groups = new Map();
-  const activeParent = new Map();
-  for (const row of rows) {
-    const sheetKey = `${row.source_file}|${row.source_sheet}`;
-    if (row.is_main) {
-      const key = `${sheetKey}|${row.source_row}`;
-      const group = { ...row, childCount:0, total:0, receivedTotal:0, hasQuantity:false, hasReceived:false, children:[] };
-      groups.set(key, group);
-      activeParent.set(sheetKey, group);
-      continue;
-    }
-    const parent = activeParent.get(sheetKey);
-    if (parent) { parent.children.push(row); parent.childCount += 1; if (typeof row.quantity === 'number') { parent.total += row.quantity; parent.hasQuantity = true; } if (typeof row.received === 'number') { parent.receivedTotal += row.received; parent.hasReceived = true; } }
-  }
-  const components = [...groups.values()];
-  const received = rows.reduce((sum, row) => sum + (typeof row.received === 'number' ? row.received : 0),0);
-  const search = document.querySelector('#materialSearch')?.value.trim().toLowerCase() || '';
-  const visibleComponents = incompleteOnly
-    ? components.filter((group) => filterMaterialRowsByStatus(group.children, state.materialStatusFilter).length > 0)
-    : components;
-  const { matching, other } = filterMaterialGroups(visibleComponents, search);
-  const reportRows = filterMaterialRowsByStatus(rows.filter((row) => !row.is_main), 'incomplete')
-    .filter((row) => !search || ['assembly','parent','drawing','description','part_no','source_sheet']
-      .some((key) => String(row[key] || '').toLocaleLowerCase().includes(search)))
-    .map((row) => ({ ...row, assembly:row.assembly || row.parent || row.drawing || row.description,
-      remaining:getMaterialShortageQuantity(row) }));
-  reportRows.sort((left, right) => Number(left.status !== 'chưa có') - Number(right.status !== 'chưa có')
-    || (right.remaining ?? -1) - (left.remaining ?? -1));
-  const affectedAssemblies = new Set(reportRows.map((row) => `${row.source_file}|${row.source_sheet}|${row.parent || row.assembly || row.drawing || row.source_row}`)).size;
-  const affectedSheets = new Set(reportRows.map((row) => `${row.source_file}|${row.source_sheet}`)).size;
-  const shortageTotal = reportRows.reduce((sum, row) => sum + (typeof row.remaining === 'number' ? row.remaining : 0), 0);
-  const files = [...new Set(rows.map((row) => row.source_file))];
-  const renderGroups = (items, filterChildren = false) => items.slice(0,250).map((group,index) => {
-    const percent = group.hasQuantity && group.total && group.hasReceived ? Math.min(100,Math.round(group.receivedTotal / group.total * 100)) : null;
-    const statusMatchedChildren = filterMaterialRowsByStatus(group.children, state.materialStatusFilter);
-    const matchingChildren = statusMatchedChildren.filter((row) =>
-      !search || ['assembly','drawing','description','part_no','source_sheet'].some((key) => String(row[key] || '').toLocaleLowerCase().includes(search)));
-    const hasChildFilters = incompleteOnly || Boolean(search);
-    const parentMatchesSearch = Boolean(search) && ['assembly','drawing','description','part_no','source_sheet']
-      .some((key) => String(group[key] || '').toLocaleLowerCase().includes(search));
-    const children = incompleteOnly
-      ? (parentMatchesSearch ? statusMatchedChildren : matchingChildren)
-      : (search && matchingChildren.length ? matchingChildren : group.children);
-    const defaultOpen = hasChildFilters ? matchingChildren.length > 0 || (incompleteOnly && parentMatchesSearch) : (!search && index === 0);
-    const openByDefault = state.materialCardsExpanded === 'all' ? true : state.materialCardsExpanded === 'none' ? false : defaultOpen;
-    const receiptDate = formatMaterialDate(getMaterialReceiptDate(group));
-    return `<details class="assembly-card" ${openByDefault ? 'open' : ''}><summary><span class="progress-ring" style="--value:${percent || 0}%"><b>${percent === null ? '—' : `${percent}%`}</b></span><span class="assembly-title"><strong>${highlightMatch(group.assembly || group.drawing || group.description,search)}</strong><small>${highlightMatch(group.description,search)} · ${highlightMatch(group.drawing,search)}</small><small class="assembly-dates">Ngày nhận: ${fmt(receiptDate)}</small></span><span class="assembly-qty"><b>${fmt(group.hasReceived ? group.receivedTotal : null)} / ${fmt(group.hasQuantity ? group.total : null)}</b><small>Đã nhận / tổng SL</small></span><span class="disclosure">⌄</span></summary><div class="assembly-body">${tableMarkup(children,materialColumns,{limit:150,search})}</div></details>`;
-  }).join('');
-  const sheetOptionsByFile = new Map();
-  for (const option of sheetOptions) {
-    if (!sheetOptionsByFile.has(option.source_file)) sheetOptionsByFile.set(option.source_file, []);
-    sheetOptionsByFile.get(option.source_file).push(option);
-  }
-  const sheetSelectOptions = [...sheetOptionsByFile].map(([file, options]) => `<optgroup label="${esc(file)}">${options.map((option) => {
-    const key = JSON.stringify([option.source_file, option.source_sheet]);
-    return `<option value="${esc(key)}" ${state.materialSheetFilter === key ? 'selected' : ''}>${esc(option.source_sheet)}</option>`;
-  }).join('')}</optgroup>`).join('');
-  return `${heading('MATERIAL CONTROL · PL','BOM & Vật tư PL','Theo dõi BOM, tình trạng nhận vật tư và danh sách cần bổ sung theo dự án.',projectSelect())}
-    ${renderMaterialDashboard(dashboardRows, dashboardScope)}
-    <div class="material-filter-stack"><label class="filter-label material-sheet-select">Sheet hạng mục<select id="materialSheetFilter" aria-label="Lọc vật tư theo sheet hạng mục"><option value="" ${state.materialSheetFilter ? '' : 'selected'}>Toàn bộ file (${sheetOptions.length} sheet)</option>${sheetSelectOptions}</select></label>
-    <label class="filter-label material-sheet-select material-status-select">Trạng thái vật tư<select id="materialStatusFilter" aria-label="Lọc vật tư chưa đủ"><option value="" ${incompleteOnly ? '' : 'selected'}>Tất cả trạng thái</option><option value="incomplete" ${incompleteOnly ? 'selected' : ''}>Chưa đủ (bao gồm chưa nhận)</option></select></label>
-    <div class="filter-toolbar"><label class="search-box">${icon('search')}<input id="materialSearch" placeholder="Tìm cấu kiện, mã bản vẽ, mô tả, mã chi tiết…" value="${esc(search)}"></label><span class="source-chip">Nguồn: ${files.map(esc).join(', ') || '—'}</span></div></div>
-    <div class="stats-grid compact">${statCard('Dòng vật tư',rows.length,'Theo dự án đang chọn')}${statCard('Cấu kiện chính',components.length,'Nhóm AS Symbol / Symbol')}${statCard('Tổng đã nhận',received,'Cộng từ dữ liệu nhận PL','green')}${statCard('Workbook nguồn',files.length,'Không công khai file gốc')}</div>
-    <div class="section-heading material-results-heading"><div><span class="eyebrow">ASSEMBLY BOM</span><h3>Kết quả tìm kiếm <span class="muted-count">${matching.length}</span></h3></div><div class="material-card-actions"><button class="button" id="closeMaterialCards" type="button">Đóng tất cả</button><button class="button primary" id="openMaterialCards" type="button">Mở tất cả</button></div></div>
-    ${matching.length ? `<div class="assembly-list">${renderGroups(matching,true)}</div>${other.length ? `<details class="other-results" ${state.materialCardsExpanded === 'all' ? 'open' : ''}><summary>Xem ${other.length.toLocaleString('vi-VN')} cấu kiện khác${search ? ' không khớp từ khóa' : ''}</summary><div class="assembly-list">${renderGroups(other)}</div></details>` : ''}` : '<div class="empty-state"><strong>Không tìm thấy cấu kiện phù hợp</strong><p>Thử mã bản vẽ, cụm lắp ráp, mô tả hoặc mã chi tiết. Các cấu kiện khác có thể mở bên dưới nếu có.</p></div>' + (other.length ? `<details class="other-results" ${state.materialCardsExpanded === 'all' ? 'open' : ''}><summary>Xem ${other.length.toLocaleString('vi-VN')} cấu kiện khác</summary><div class="assembly-list">${renderGroups(other)}</div></details>` : '')}
-    <section class="shortage-report"><div class="section-heading"><div><span class="eyebrow">MATERIAL ACTION REPORT</span><h3>Báo cáo vật tư còn thiếu <span class="muted-count">${reportRows.length}</span></h3><p class="muted">Danh sách dòng vật tư chưa đủ theo dự án, sheet và từ khóa đang chọn.</p></div></div>
-      <div class="stats-grid compact">${statCard('Dòng vật tư còn thiếu',reportRows.length,'Cần theo dõi / bổ sung','red')}${statCard('Tổng số lượng cần bổ sung',shortageTotal,'Theo cột còn thiếu hoặc số lượng yêu cầu − đã nhận','red')}${statCard('Cụm bị ảnh hưởng',affectedAssemblies,'Có ít nhất một dòng thiếu','gold')}${statCard('Sheet có thiếu',affectedSheets,'Trong phạm vi lọc hiện tại')}</div>
-      <div class="shortage-report-note">Số lượng thiếu lấy từ cột “Còn thiếu”; nếu workbook không có số này, báo cáo tính bằng “Số lượng yêu cầu − Đã nhận”.</div>
-      ${reportRows.length ? tableMarkup(reportRows,materialShortageColumns,{limit:500,search}) : '<div class="empty-state"><strong>Không có vật tư còn thiếu</strong><p>Không có dòng thiếu trong dự án, sheet hoặc nội dung tìm kiếm hiện tại.</p></div>'}</section>
-`;
+function auditSheetOptions() {
+  const rows = state.btpData?.rows || [];
+  return [...new Map(rows.filter((row) => row.source_file && row.source_sheet)
+    .map((row) => {
+      const source_sheet = materialSheetName(row.source_sheet);
+      const key = materialSheetKey(row.source_file, source_sheet);
+      return [key, { key, source_file:row.source_file, source_sheet }];
+    })).values()]
+    .sort((left, right) => left.source_sheet.localeCompare(right.source_sheet, 'vi', { numeric:true, sensitivity:'base' })
+      || left.source_file.localeCompare(right.source_file, 'vi', { numeric:true, sensitivity:'base' }));
 }
-function btpBomContext(row, materialRows) {
-  const partNo = btpKey(row?.part_no);
-  const sourceFile = btpKey(row?.source_file);
-  const baseSheet = btpSheetBase(row?.source_sheet);
-  const candidates = (Array.isArray(materialRows) ? materialRows : []).filter((material) =>
-    Number(material?.is_main) === 1
-    && btpKey(material.source_file) === sourceFile
-    && btpSheetBase(material.source_sheet) === baseSheet
-    && material.assembly
-    && partNo.startsWith(btpKey(material.assembly) + '-'));
-  const parent = candidates.sort((left, right) => String(right.assembly).length - String(left.assembly).length)[0] || null;
-  if (!parent) return { parent:null, bomLine:null, assemblyCode:partNo.split('-').slice(0, 3).join('-') };
-  const childCode = partNo.slice(String(parent.assembly).length + 1);
-  const bomLine = (Array.isArray(materialRows) ? materialRows : []).find((material) =>
-    Number(material?.is_main) !== 1
-    && btpKey(material.source_file) === sourceFile
-    && btpSheetBase(material.source_sheet) === baseSheet
-    && btpKey(material.parent) === btpKey(parent.assembly)
-    && btpKey(material.part_no) === btpKey(childCode)) || null;
-  return { parent, bomLine, assemblyCode:parent.assembly };
+function auditStatus(row) {
+  if (row.kind === 'bom-only') return 'Chưa có BTP';
+  const remaining = getBtpShortageQuantity(row.btp);
+  if (remaining === 0) return 'Đã đủ';
+  if (typeof row.btp?.received === 'number' && row.btp.received > 0) return 'Đang nhận';
+  if (remaining > 0) return 'Còn thiếu';
+  return 'Chưa rõ';
 }
-function btpPage() {
-  const dateView = state.page === 'btp-dates';
-  const btpRows = state.btpData?.rows || [];
-  const materialRows = state.data?.rows || [];
-  const sheetOptions = [...new Map(btpRows.filter((row) => row.source_file && row.source_sheet)
-    .map((row) => [JSON.stringify([row.source_file,row.source_sheet]), { source_file:row.source_file, source_sheet:row.source_sheet }])).values()]
-    .sort((left,right) => left.source_file.localeCompare(right.source_file,'vi',{numeric:true,sensitivity:'base'})
-      || left.source_sheet.localeCompare(right.source_sheet,'vi',{numeric:true,sensitivity:'base'}));
-  const sheetRows = filterBtpRows(btpRows, state.btpSheetFilter, '');
-  const receiptDates = listBtpReceiptDates(sheetRows);
-  const search = String(state.btpSearch || document.querySelector('#btpSearch')?.value || '').trim();
-  const statusFilter = state.btpStatusFilter || '';
-  let filteredRows = filterBtpRows(btpRows, state.btpSheetFilter, search);
-  if (dateView) filteredRows = filterBtpRowsByReceiptDate(filteredRows, state.btpReceiptDateFilter);
-  if (statusFilter === 'incomplete') filteredRows = filteredRows.filter((row) => {
-    const remaining = getBtpShortageQuantity(row);
-    return remaining === null || remaining > 0;
-  });
-  if (statusFilter === 'received') filteredRows = filteredRows.filter((row) => (btpReceivedQuantity(row) || 0) > 0);
-  const shortageRows = filteredRows.filter((row) => (getBtpShortageQuantity(row) || 0) > 0);
-  const shortageQuantity = shortageRows.reduce((sum,row) => sum + (getBtpShortageQuantity(row) || 0),0);
-  const shortageWeight = shortageRows.reduce((sum,row) => sum + (getBtpShortageWeight(row) || 0),0);
-  const btpMissingWeightRows = shortageRows.filter((row) => getBtpShortageWeight(row) === null).length;
+function auditStatusClass(status) {
+  return status === 'Đã đủ' ? 'success' : status === 'Chưa có BTP' || status === 'Còn thiếu' ? 'danger' : 'warning';
+}
+function auditLinkPill(status, type) {
+  const matched = status === 'matched';
+  const missing = status === 'missing' || status === 'no-btp';
+  const label = type === 'bom'
+    ? ({ matched:'Khớp BOM', 'parent-only':'Chỉ khớp cụm', ambiguous:'BOM mơ hồ', missing:'Không khớp BOM', 'no-btp':'Không có BTP' })[status] || 'Chưa rõ'
+    : ({ matched:'Khớp QLDA', ambiguous:'QLDA mơ hồ', missing:'Không khớp QLDA' })[status] || 'Chưa rõ';
+  return `<span class="status-pill ${matched ? 'success' : missing ? 'danger' : 'warning'}">${label}</span>`;
+}
+function auditReceiptEvents(row) {
+  const entries = String(row?.btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean);
+  return entries.length ? `<span class="audit-receipt-list">${entries.map((event) => `<span>${fmt(event.replace(/:\s*/, ' · '))}</span>`).join('')}</span>` : '<span class="muted">Chưa có ngày nhận</span>';
+}
+function auditProgressCell(row) {
+  if (!row.progress?.length) return auditLinkPill(row.qldaStatus, 'qlda');
+  const descriptions = row.progress.map((item) => `${item.source_file || 'QLDA'} · ${item.source_sheet || 'Progress'} · dòng ${item.source_row || '—'} · ${item.part_no || '—'} · SL ${item.quantity ?? '—'} · U.Weight ${item.unit_weight ?? '—'} · T.Weight ${item.total_weight ?? '—'} · bàn giao ${item.handover_qty ?? '—'} ${item.handover_date || ''} · nhận ${item.receiver || '—'}`);
+  return `<span class="audit-qlda-detail" title="${esc(descriptions.join('\n'))}">${auditLinkPill(row.qldaStatus, 'qlda')}<small>${fmt(row.progress[0].receiver || row.progress[0].handover_date || row.progress[0].part_no)}${row.progress.length > 1 ? ` · +${row.progress.length - 1}` : ''}</small></span>`;
+}
+function auditRowMarkup(row) {
+  const btp = row.btp || {};
+  const bom = row.bomLine || {};
+  const remaining = row.btp ? getBtpShortageQuantity(row.btp) : null;
+  const status = auditStatus(row);
+  const source = [row.bom_source_file || row.btp_source_file, row.bom_source_sheet || row.btp_source_sheet].filter(Boolean).join(' · ');
+  return `<tr><td class="audit-frozen-assembly"><strong>${fmt(row.bomParent?.assembly || btp.part_no || bom.part_no)}</strong><small>${fmt(row.bomParent?.drawing || '')}</small></td>
+    <td class="audit-code">${fmt(bom.part_no)}</td><td class="audit-description">${fmt(bom.description)}</td><td>${fmt(bom.size)}</td><td class="numeric-cell">${fmt(bom.quantity)}</td>
+    <td class="audit-code">${fmt(btp.part_no)}</td><td>${fmt(btp.material_type)}</td><td>${fmt(btp.material)}</td><td>${fmt(btp.unit)}</td><td>${fmt(btp.size)}</td>
+    <td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td>
+    <td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${auditLinkPill(row.bomStatus, 'bom')}</td><td>${auditProgressCell(row)}</td>
+    <td class="audit-source" title="${esc(source)}">${fmt(row.bom_source_sheet || row.btp_source_sheet)}</td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
+}
+function materialAuditRows() {
+  return buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:state.btpData?.rows || [], progressRows:state.progressData?.rows || [] });
+}
+function auditSelectedKeys(options = auditSheetOptions()) {
+  const all = options.map((option) => option.key);
+  return new Set(state.materialSelectedSheets === null ? all : state.materialSelectedSheets);
+}
+function auditRowMatchesSheets(row, selected) {
+  if (!selected.size) return false;
+  const file = row.btp ? row.btp.source_file : row.source_file;
+  const sheet = row.btp ? row.btp.source_sheet : row.source_sheet;
+  return selected.has(materialSheetKey(file, sheet));
+}
+function filteredMaterialAuditRows({ rows = materialAuditRows(), options = auditSheetOptions() } = {}) {
+  const selected = auditSelectedKeys(options);
+  const search = String(state.materialSearch || '').trim().toLocaleLowerCase();
+  return rows.filter((row) => {
+    if (!auditRowMatchesSheets(row, selected)) return false;
+    if (state.materialReceiptDateFilter && (!row.btp || !filterBtpRowsByReceiptDate([row.btp], state.materialReceiptDateFilter).length)) return false;
+    const status = auditStatus(row);
+    if (state.materialStatusFilter === 'shortage' && !(getBtpShortageQuantity(row.btp) > 0)) return false;
+    if (state.materialStatusFilter === 'received' && !(Number(row.btp?.received) > 0)) return false;
+    if (state.materialStatusFilter === 'no-btp' && row.kind !== 'bom-only') return false;
+    if (state.materialStatusFilter === 'unlinked' && row.bomStatus === 'matched' && row.qldaStatus === 'matched') return false;
+    if (search && !materialAuditRowSearchText(row).includes(search)) return false;
+    return status !== 'Không dùng';
+  }).sort((left, right) => Number(right.kind === 'bom-only') - Number(left.kind === 'bom-only')
+    || Number(getBtpShortageQuantity(right.btp) || 0) - Number(getBtpShortageQuantity(left.btp) || 0)
+    || String(left.source_sheet || '').localeCompare(String(right.source_sheet || ''), 'vi', { numeric:true, sensitivity:'base' })
+    || Number(left.btp?.source_row || left.bomLine?.source_row || 0) - Number(right.btp?.source_row || right.bomLine?.source_row || 0));
+}
+function materialsAuditPage() {
+  const options = auditSheetOptions();
+  const selected = auditSelectedKeys(options);
+  const visibleRows = filteredMaterialAuditRows({ options });
+  const btpRows = (state.btpData?.rows || []).filter((row) => selected.has(materialSheetKey(row.source_file, row.source_sheet)));
+  const receiptDates = listBtpReceiptDates(btpRows);
+  const shortageCount = visibleRows.filter((row) => row.btp && getBtpShortageQuantity(row.btp) > 0).length;
+  const unmatchedCount = visibleRows.filter((row) => row.bomStatus !== 'matched' || row.qldaStatus !== 'matched').length;
   const pageSize = 100;
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-  const pageIndex = Math.min(Math.max(0, Number(state.btpPageIndex) || 0), pageCount - 1);
-  state.btpPageIndex = pageIndex;
-  const visibleRows = filteredRows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
-  const sheetSelect = sheetOptions.map((option) => {
-    const key = JSON.stringify([option.source_file,option.source_sheet]);
-    return '<option value="' + esc(key) + '"' + (state.btpSheetFilter === key ? ' selected' : '') + '>' + esc(option.source_file) + ' · ' + esc(option.source_sheet) + '</option>';
-  }).join('');
-  const dateSelect = receiptDates.map((date) => '<option value="' + esc(date) + '"' + (state.btpReceiptDateFilter === date ? ' selected' : '') + '>' + esc(formatMaterialDate(date) || date) + '</option>').join('');
-  const tableRows = visibleRows.map((row) => {
-    const context = btpBomContext(row, materialRows);
-    const bomLine = context.bomLine;
-    const remaining = getBtpShortageQuantity(row);
-    const received = btpReceivedQuantity(row);
-    const rowStatus = remaining === 0 ? 'Đã đủ' : received > 0 ? 'Đang về' : remaining === null ? 'Chưa rõ' : 'Chưa có';
-    const statusClass = rowStatus === 'Đã đủ' ? 'success' : rowStatus === 'Chưa có' ? 'danger' : 'warning';
-    const timeline = String(row.daily_progress || '').split(/;\s*/).filter(Boolean)
-      .map((event) => '<span class="receipt-event">' + esc(event.replace(':', ' ·')) + '</span>').join('');
-    const note = String(row.note || '').trim();
-    return '<tr>' +
-      '<td class="btp-frozen-parent">' + (context.parent ? fmt(context.parent.assembly) : '<span class="btp-unmatched">Chưa khớp BOM</span>') + '</td>' +
-      '<td class="btp-frozen-code">' + fmt(context.parent?.drawing) + '</td>' +
-      '<td>' + (bomLine ? fmt(bomLine.part_no) : '<span class="btp-unmatched">Chưa khớp BOM</span>') + '</td>' +
-      '<td class="numeric-cell">' + fmt(bomLine?.quantity) + '</td>' +
-      '<td class="numeric-cell">' + fmt(bomLine?.weight) + '</td>' +
-      '<td>' + fmt(bomLine?.size) + '</td>' +
-      '<td class="btp-note">' + fmt(bomLine?.description) + '</td>' +
-      '<td class="btp-code">' + fmt(row.part_no) + '</td>' +
-      '<td>' + fmt(row.material_type) + '</td>' +
-      '<td>' + fmt(row.material) + '</td>' +
-      '<td>' + fmt(row.unit) + '</td>' +
-      '<td>' + fmt(row.size) + '</td>' +
-      '<td class="numeric-cell">' + fmt(row.length_mm) + '</td>' +
-      '<td class="numeric-cell">' + fmt(row.design_quantity) + '</td>' +
-      '<td class="numeric-cell">' + fmt(row.unit_weight) + '</td>' +
-      '<td class="numeric-cell">' + fmt(row.total_weight) + '</td>' +
-      '<td class="numeric-cell received-value">' + fmt(received) + '</td>' +
-      '<td class="numeric-cell ' + (remaining > 0 ? 'shortage-value' : '') + '">' + fmt(remaining) + '</td>' +
-      '<td class="btp-timeline-cell"><span class="receipt-timeline">' + (timeline || '<span class="no-receipt-date">Chưa có ngày</span>') + '</span></td>' +
-      '<td>' + fmt(row.joint_check) + '</td>' +
-      '<td><span class="status-pill ' + statusClass + '">' + rowStatus + '</span>' + (note.includes('chiều dài') ? '<span class="status-pill warning btp-alert-pill">' + esc(note.split(/[|\n]/)[0].trim()) + '</span>' : '') + '</td>' +
-      '<td class="btp-note">' + fmt(note) + '</td>' +
-    '</tr>';
-  }).join('');
-  const sheetCount = new Set(btpRows.map((row) => row.source_file + '|' + row.source_sheet)).size;
-  const sheetLabel = state.btpSheetFilter ? '1 sheet được chọn' : sheetCount + ' sheet';
-  return heading(dateView ? 'BTP RECEIPT · DAILY VIEW' : 'BTP DELIVERY · RECEIPT CONTROL', dateView ? 'Theo ngày' : 'Bán thành phẩm', dateView ? 'Tra cứu các đợt nhận BTP theo ngày, sheet và trạng thái.' : 'Theo dõi số lượng còn thiếu và thông tin BOM để đối chiếu.',projectSelect()) +
-    '<div class="btp-control-bar"><label class="filter-label material-sheet-select">Sheet BTP<select id="btpSheetFilter" aria-label="Lọc theo sheet BTP"><option value="">Tất cả sheet (' + sheetCount + ')</option>' + sheetSelect + '</select></label>' +
-    (dateView ? '<label class="filter-label material-sheet-select">Ngày nhận<select id="btpReceiptDateFilter" aria-label="Lọc theo ngày nhận"><option value="">Tất cả ngày nhận</option>' + dateSelect + '</select></label>' : '') +
-    '<label class="filter-label material-sheet-select">Trạng thái<select id="btpStatusFilter" aria-label="Lọc theo trạng thái"><option value=""' + (statusFilter ? '' : ' selected') + '>Tất cả</option><option value="incomplete"' + (statusFilter === 'incomplete' ? ' selected' : '') + '>Còn thiếu</option><option value="received"' + (statusFilter === 'received' ? ' selected' : '') + '>Đã nhận</option></select></label>' +
-    '<label class="search-box">' + icon('search') + '<input id="btpSearch" placeholder="Tìm mã BTP, cấu kiện, vật liệu…" value="' + esc(search) + '"></label>' +
-    '<button class="button primary btp-export-button" id="exportBtpShortage" type="button" ' + (shortageRows.length ? '' : 'disabled') + '>' + icon('download') + '<span>Xuất List thiếu</span></button><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>' +
-    '<div class="stats-grid compact btp-summary-grid">' +
-      statCard('Dòng trong bảng',filteredRows.length,'Phạm vi: ' + sheetLabel) +
-      statCard('Dòng còn thiếu',shortageRows.length,'Được đưa vào file xuất','red') +
-      statCard('Số lượng còn thiếu',shortageQuantity,'Theo cột Còn thiếu','gold') +
-      statCard('Khối lượng thiếu',shortageWeight,'Kg · chỉ cộng dòng có U.Weight') +
-    '</div>' +
-    '<div class="table-frame btp-unified-table-frame"><table class="data-table btp-unified-table"><thead><tr><th>Cấu kiện BOM</th><th>Bản vẽ</th><th>Mã BOM</th><th>SL BOM</th><th>KL BOM</th><th>Size BOM</th><th>Mô tả BOM</th><th>Mã BTP (chi tiết)</th><th>Chủng loại</th><th>Vật liệu</th><th>DVG</th><th>Size BTP</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>U.Weight</th><th>T.Weight</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>' +
-      (tableRows || '<tr><td class="btp-empty-row" colspan="22">Chưa có BTP phù hợp. Hãy chọn dự án hoặc đổi bộ lọc.</td></tr>') +
-    '</tbody></table></div>' +
-    '<div class="btp-pagination"><span>Hiển thị ' + (filteredRows.length ? (pageIndex * pageSize + 1) + '–' + Math.min((pageIndex + 1) * pageSize, filteredRows.length) + ' / ' : '') + filteredRows.length + ' dòng</span><div><button class="button" id="btpPrevPage" type="button" ' + (pageIndex === 0 ? 'disabled' : '') + '>Trước</button><span>Trang ' + (pageIndex + 1) + ' / ' + pageCount + '</span><button class="button" id="btpNextPage" type="button" ' + (pageIndex >= pageCount - 1 ? 'disabled' : '') + '>Sau</button></div></div>' +
-    (btpMissingWeightRows ? '<p class="shortage-report-note">' + btpMissingWeightRows + ' dòng còn thiếu chưa có U.Weight; khối lượng thiếu của các dòng đó chưa được tính.</p>' : '');
+  const pageCount = Math.max(1, Math.ceil(visibleRows.length / pageSize));
+  state.materialPageIndex = Math.min(Math.max(0, state.materialPageIndex), pageCount - 1);
+  const pageIndex = state.materialPageIndex;
+  const pageRows = visibleRows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  const allSelected = options.length > 0 && selected.size === options.length;
+  const sheetOptionsMarkup = options.map((option) => `<label class="sheet-check-option"><input type="checkbox" data-material-sheet value="${esc(option.key)}" ${selected.has(option.key) ? 'checked' : ''}><span>${esc(option.source_sheet)}</span><small>${esc(option.source_file)}</small></label>`).join('');
+  const selectedLabel = allSelected ? `Tất cả sheet (${options.length})` : `${selected.size}/${options.length} sheet`;
+  const dateOptions = receiptDates.map((date) => `<option value="${esc(date)}" ${state.materialReceiptDateFilter === date ? 'selected' : ''}>${esc(formatMaterialDate(date) || date)}</option>`).join('');
+  const filteredBtp = visibleRows.filter((row) => row.btp).map((row) => row.btp);
+  const project = state.projects.find((item) => item.code === state.currentProject);
+  const filename = state.btpData?.rows?.[0]?.source_file || state.data?.rows?.[0]?.source_file || `${state.currentProject}PL.xlsx`;
+  const qldaFilename = state.progressData?.rows?.[0]?.source_file || `${state.currentProject}.xlsx`;
+  return `${heading('MATERIAL CONTROL · BOM / BTP / QLDA','BOM & Vật tư PL','Đối chiếu BOM, BTP và tiến độ QLDA theo tên file dự án; tất cả ngày nhận được giữ lại để kiểm tra.',projectSelect())}
+    <section class="material-audit-controls" aria-label="Lọc và xuất dữ liệu BOM, BTP">
+      <div class="audit-filter-grid">
+        <label class="filter-label">Sheet BOM / BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
+        <label class="filter-label">Ngày nhận<select id="materialReceiptDateFilter"><option value="">Tất cả ngày nhận</option>${dateOptions}</select></label>
+        <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
+        <label class="search-box audit-search">${icon('search')}<input id="materialSearch" placeholder="Tìm cụm, bản vẽ, mã BOM/BTP, QLDA…" value="${esc(state.materialSearch)}"></label>
+        <button class="button primary audit-export-button" id="exportBtpShortage" type="button" ${shortageCount ? '' : 'disabled'}>${icon('download')}<span>Xuất List thiếu</span></button>
+      </div>
+      <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
+    </section>
+    <div class="stats-grid compact audit-stats">${statCard('Dòng đối chiếu',visibleRows.length,'Theo sheet, ngày, trạng thái và từ khóa')}${statCard('Dòng BTP còn thiếu',shortageCount,'Được đưa vào List thiếu','red')}${statCard('BOM chưa có BTP',visibleRows.filter((row) => row.kind === 'bom-only').length,'Kiểm tra phần chưa được lập BTP','gold')}${statCard('Liên kết cần xem',unmatchedCount,'BOM hoặc QLDA chưa khớp','blue')}</div>
+    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BOM · BTP · QLDA</span><h3>Bảng đối chiếu <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${pageIndex * pageSize + (visibleRows.length ? 1 : 0)}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ${visibleRows.length}</span></div>
+    <div class="table-frame material-audit-table-frame"><table class="data-table material-audit-table"><thead><tr><th>Cụm / bản vẽ</th><th>Mã BOM</th><th>Mô tả BOM</th><th>Size BOM</th><th>SL BOM</th><th>Mã BTP</th><th>Chủng loại</th><th>Vật liệu</th><th>DVG</th><th>Size BTP</th><th>Chiều dài</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tất cả ngày nhận</th><th>Nối BOM</th><th>Nối QLDA</th><th>Sheet nguồn</th><th>Ghi chú</th></tr></thead><tbody>${pageRows.map(auditRowMarkup).join('') || '<tr><td colspan="19" class="btp-empty-row">Không có dòng phù hợp. Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</td></tr>'}</tbody></table></div>
+    <div class="btp-pagination"><span>${visibleRows.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ` : ''}${fmt(visibleRows.length)} dòng</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
+    ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;
+}
+function materialDashboardPage() {
+  const options = auditSheetOptions();
+  const rows = state.btpData?.rows || [];
+  const selectedRows = rows.filter((row) => !state.materialDashboardSheetFilter
+    || materialSheetKey(row.source_file, row.source_sheet) === state.materialDashboardSheetFilter);
+  const selectedLabel = state.materialDashboardSheetFilter
+    ? options.find((option) => option.key === state.materialDashboardSheetFilter)?.source_sheet || 'Sheet đã chọn'
+    : 'Toàn bộ sheet của dự án';
+  return `${heading('MATERIAL DASHBOARD · BOM & VẬT TƯ','Dashboard BOM & vật tư','Lũy kế số lượng nhận theo ngày và so sánh đã nhận / còn thiếu theo từng đơn vị giao.',projectSelect())}
+    <div class="audit-dashboard-filter"><label class="filter-label">Sheet dashboard<select id="materialDashboardSheetFilter"><option value="">Tất cả sheet (${options.length})</option>${options.map((option) => `<option value="${esc(option.key)}" ${option.key === state.materialDashboardSheetFilter ? 'selected' : ''}>${esc(option.source_sheet)} · ${esc(option.source_file)}</option>`).join('')}</select></label><span class="source-chip">Nguồn: ${esc(rows[0]?.source_file || `${state.currentProject}PL.xlsx`)}</span></div>
+    <div class="stats-grid compact audit-dashboard-stats">${statCard('Dòng BTP',selectedRows.length,selectedLabel)}${statCard('Đã nhận',selectedRows.reduce((sum, row) => sum + (btpReceivedQuantity(row) || 0), 0),'Cộng từ các sheet đang xem','green')}${statCard('Còn thiếu',selectedRows.reduce((sum, row) => sum + (getBtpShortageQuantity(row) || 0), 0),'Theo cột Còn thiếu','red')}${statCard('Đơn vị giao',new Set(selectedRows.map((row) => row.unit).filter(Boolean)).size,'Theo DVG trong file BTP')}</div>
+    ${renderMaterialDashboard(selectedRows, selectedLabel)}`;
 }
 function projectsPage() {
   const rows = state.data?.rows || [];
@@ -422,79 +365,73 @@ function bindPage() {
   importFile?.addEventListener('change', updateImportProjectPreview);
   updateImportFileMode();
   document.querySelector('#projectFilter')?.addEventListener('change', async (event) => {
-    state.currentProject = event.target.value; state.materialSheetFilter = ''; state.btpSheetFilter = ''; state.btpReceiptDateFilter = ''; state.btpStatusFilter = ''; state.btpSearch = ''; state.btpPageIndex = 0; await loadPageData(); renderPage();
+    state.currentProject = event.target.value;
+    state.materialSelectedSheets = null;
+    state.materialReceiptDateFilter = '';
+    state.materialStatusFilter = '';
+    state.materialSearch = '';
+    state.materialPageIndex = 0;
+    state.materialDashboardSheetFilter = '';
+    await loadPageData(); renderPage();
   });
+  const rerenderAudit = ({ keepDropdown = false, focusSearch = false, cursor = null } = {}) => {
+    const page = document.querySelector('#page');
+    const position = window.scrollY;
+    const dropdownOpen = keepDropdown && document.querySelector('#materialSheetDropdown')?.open;
+    if (!page) return;
+    page.innerHTML = materialsAuditPage();
+    bindPage();
+    const dropdown = document.querySelector('#materialSheetDropdown');
+    if (dropdownOpen && dropdown) dropdown.open = true;
+    if (focusSearch) {
+      const search = document.querySelector('#materialSearch');
+      search?.focus();
+      if (cursor !== null) search?.setSelectionRange(cursor, cursor);
+    }
+    window.scrollTo(0,position);
+  };
   document.querySelector('#materialSearch')?.addEventListener('input', (event) => {
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    const cursor = event.currentTarget.selectionStart;
-    page.innerHTML = materialsPage(); bindPage();
-    const nextSearch = document.querySelector('#materialSearch');
-    nextSearch?.focus(); nextSearch?.setSelectionRange(cursor, cursor);
-    window.scrollTo(0,position);
+    state.materialSearch = event.currentTarget.value;
+    state.materialPageIndex = 0;
+    rerenderAudit({ focusSearch:true, cursor:event.currentTarget.selectionStart });
   });
-  document.querySelector('#materialSheetFilter')?.addEventListener('change', (event) => {
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    state.materialSheetFilter = event.currentTarget.value;
-    page.innerHTML = materialsPage(); bindPage();
-    window.scrollTo(0,position);
+  document.querySelectorAll('[data-material-sheet]')?.forEach((checkbox) => checkbox.addEventListener('change', () => {
+    const checked = [...document.querySelectorAll('[data-material-sheet]:checked')].map((item) => item.value);
+    const options = auditSheetOptions();
+    state.materialSelectedSheets = checked.length === options.length ? null : checked;
+    state.materialPageIndex = 0;
+    state.materialReceiptDateFilter = '';
+    rerenderAudit({ keepDropdown:true });
+  }));
+  document.querySelector('[data-material-sheet-all]')?.addEventListener('change', (event) => {
+    state.materialSelectedSheets = event.currentTarget.checked ? null : [];
+    state.materialPageIndex = 0;
+    state.materialReceiptDateFilter = '';
+    rerenderAudit({ keepDropdown:true });
+  });
+  document.querySelector('#materialReceiptDateFilter')?.addEventListener('change', (event) => {
+    state.materialReceiptDateFilter = event.currentTarget.value;
+    state.materialPageIndex = 0;
+    rerenderAudit();
   });
   document.querySelector('#materialStatusFilter')?.addEventListener('change', (event) => {
-    const page = document.querySelector('#page'); const position = window.scrollY;
     state.materialStatusFilter = event.currentTarget.value;
-    page.innerHTML = materialsPage(); bindPage();
-    window.scrollTo(0,position);
+    state.materialPageIndex = 0;
+    rerenderAudit();
   });
-  document.querySelector('#openMaterialCards')?.addEventListener('click', () => {
-    state.materialCardsExpanded = 'all';
-    document.querySelectorAll('.other-results').forEach((card) => { card.open = true; });
-    document.querySelectorAll('.assembly-card').forEach((card) => { card.open = true; });
+  document.querySelector('#auditPrevPage')?.addEventListener('click', () => {
+    state.materialPageIndex = Math.max(0, state.materialPageIndex - 1);
+    rerenderAudit();
   });
-  document.querySelector('#closeMaterialCards')?.addEventListener('click', () => {
-    state.materialCardsExpanded = 'none';
-    document.querySelectorAll('.assembly-card').forEach((card) => { card.open = false; });
-    document.querySelectorAll('.other-results').forEach((card) => { card.open = false; });
+  document.querySelector('#auditNextPage')?.addEventListener('click', () => {
+    state.materialPageIndex += 1;
+    rerenderAudit();
   });
-  document.querySelector('#btpStatusFilter')?.addEventListener('change', (event) => {
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    state.btpStatusFilter = event.currentTarget.value;
-    state.btpPageIndex = 0;
-    page.innerHTML = btpPage(); bindPage();
-    window.scrollTo(0,position);
-  });
-  document.querySelector('#btpSearch')?.addEventListener('input', (event) => {
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    const cursor = event.currentTarget.selectionStart;
-    state.btpSearch = event.currentTarget.value;
-    state.btpPageIndex = 0;
-    page.innerHTML = btpPage(); bindPage();
-    const nextSearch = document.querySelector('#btpSearch');
-    nextSearch?.focus(); nextSearch?.setSelectionRange(cursor, cursor);
-    window.scrollTo(0,position);
-  });
-  document.querySelector('#btpSheetFilter')?.addEventListener('change', (event) => {
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    state.btpSheetFilter = event.currentTarget.value;
-    state.btpReceiptDateFilter = '';
-    state.btpPageIndex = 0;
-    page.innerHTML = btpPage(); bindPage();
-    window.scrollTo(0,position);
-  });
-  document.querySelector('#btpReceiptDateFilter')?.addEventListener('change', (event) => {
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    state.btpReceiptDateFilter = event.currentTarget.value;
-    state.btpPageIndex = 0;
-    page.innerHTML = btpPage(); bindPage();
-    window.scrollTo(0,position);
-  });
-  document.querySelector('#btpPrevPage')?.addEventListener('click', () => {
-    state.btpPageIndex = Math.max(0, state.btpPageIndex - 1);
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    page.innerHTML = btpPage(); bindPage(); window.scrollTo(0,position);
-  });
-  document.querySelector('#btpNextPage')?.addEventListener('click', () => {
-    state.btpPageIndex += 1;
-    const page = document.querySelector('#page'); const position = window.scrollY;
-    page.innerHTML = btpPage(); bindPage(); window.scrollTo(0,position);
+  document.querySelector('#materialDashboardSheetFilter')?.addEventListener('change', (event) => {
+    state.materialDashboardSheetFilter = event.currentTarget.value;
+    const page = document.querySelector('#page');
+    const position = window.scrollY;
+    page.innerHTML = materialDashboardPage(); bindPage(); window.scrollTo(0,position);
   });
   document.querySelector('#exportBtpShortage')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -503,43 +440,40 @@ function bindPage() {
     message.textContent = 'Đang tạo file…';
     message.className = 'btp-export-message';
     try {
-      const xlsx = window.XLSX;
-      const rows = state.btpData?.rows || [];
-      const search = state.btpSearch || document.querySelector('#btpSearch')?.value.trim() || '';
-      let selectedRows = filterBtpRows(rows, state.btpSheetFilter, search);
-      if (state.page === 'btp-dates') selectedRows = filterBtpRowsByReceiptDate(selectedRows, state.btpReceiptDateFilter);
-      if (state.btpStatusFilter === 'incomplete') selectedRows = selectedRows.filter((row) => {
-        const remaining = getBtpShortageQuantity(row);
-        return remaining === null || remaining > 0;
-      });
-      if (state.btpStatusFilter === 'received') selectedRows = selectedRows.filter((row) => (btpReceivedQuantity(row) || 0) > 0);
-      const shortageRows = selectedRows.map((row) => ({ ...row,
-        remaining:getBtpShortageQuantity(row), shortage_weight:getBtpShortageWeight(row) }))
+      const options = auditSheetOptions();
+      const selectedKeys = auditSelectedKeys(options);
+      const selectedSheets = options.filter((option) => selectedKeys.has(option.key));
+      const shortageRows = filteredMaterialAuditRows({ options })
+        .filter((row) => row.btp)
+        .map((row) => ({ ...row.btp, remaining:getBtpShortageQuantity(row.btp), shortage_weight:getBtpShortageWeight(row.btp) }))
         .filter((row) => typeof row.remaining === 'number' && row.remaining > 0);
       if (!shortageRows.length) throw new Error('Không có dòng BTP còn thiếu trong bộ lọc hiện tại.');
-      const progress = await api(`/api/projects/${encodeURIComponent(state.currentProject)}/progress`);
       const report = await exportBtpShortageWorkbook({
         rows:shortageRows,
-        progressRows:progress.rows,
+        progressRows:state.progressData?.rows || [],
         materialRows:state.data?.rows || [],
         projectCode:state.currentProject,
-        selectedSheet:state.btpSheetFilter ? JSON.parse(state.btpSheetFilter)[1] : '',
-        xlsx,
+        selectedSheets,
         templateUrl:new URL('./templates/List_thieu_mau.xlsx', import.meta.url),
       });
-      message.textContent = `Đã tạo ${report.filename} · ${fmt(report.rowCount)} dòng.`;
+      message.textContent = `Đã tạo ${report.filename} · ${fmt(report.rowCount)} dòng · khớp BOM ${fmt(report.matchedBomRows)} · khớp QLDA ${fmt(report.matchedQldaRows)}.`;
       message.className = 'btp-export-message success-message';
     } catch (error) {
       message.textContent = error.message;
       message.className = 'btp-export-message error-message';
     } finally {
-      button.disabled = !state.btpData?.rows?.length;
+      button.disabled = filteredMaterialAuditRows().every((row) => !row.btp || !(getBtpShortageQuantity(row.btp) > 0));
     }
   });
   document.querySelector('#projectSearch')?.addEventListener('input', () => { const page = document.querySelector('#page'); const position = window.scrollY; page.innerHTML = projectsPage(); bindPage(); window.scrollTo(0,position); });
   document.querySelectorAll('[data-project]').forEach((link) => link.addEventListener('click', () => {
-    if (state.currentProject !== link.dataset.project) state.materialSheetFilter = '';
-    if (state.currentProject !== link.dataset.project) { state.btpSheetFilter = ''; state.btpReceiptDateFilter = ''; }
+    if (state.currentProject !== link.dataset.project) {
+      state.materialSelectedSheets = null;
+      state.materialReceiptDateFilter = '';
+      state.materialStatusFilter = '';
+      state.materialSearch = '';
+      state.materialDashboardSheetFilter = '';
+    }
     state.currentProject = link.dataset.project;
   }));
   document.querySelector('#viewerForm')?.addEventListener('submit', async (event) => {
@@ -662,11 +596,13 @@ async function refreshPlFiles() {
 async function loadPageData() {
   state.data = null;
   state.btpData = null;
-  if (!state.currentProject || !['materials','btp','btp-dates','projects'].includes(state.page)) return;
-  if (['materials','btp','btp-dates'].includes(state.page)) {
-    [state.data, state.btpData] = await Promise.all([
+  state.progressData = null;
+  if (!state.currentProject || !['materials','materials-dashboard','projects'].includes(state.page)) return;
+  if (['materials','materials-dashboard'].includes(state.page)) {
+    [state.data, state.btpData, state.progressData] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(state.currentProject)}/materials`),
       api(`/api/projects/${encodeURIComponent(state.currentProject)}/btp`),
+      api(`/api/projects/${encodeURIComponent(state.currentProject)}/progress`),
     ]);
     return;
   }
@@ -677,10 +613,10 @@ async function renderPage() {
   page.innerHTML = '<div class="loading-state"><span class="spinner"></span><p>Đang tải dữ liệu…</p></div>';
   try {
     if (state.page === 'overview') page.innerHTML = overviewPage();
-    else if (['materials','btp','btp-dates','projects'].includes(state.page)) {
+    else if (['materials','materials-dashboard','projects'].includes(state.page)) {
       if (!state.currentProject && state.projects.length) state.currentProject = state.projects[0].code;
       await loadPageData();
-      page.innerHTML = state.page === 'materials' ? materialsPage() : state.page === 'btp' ? btpPage() : state.page === 'btp-dates' ? btpPage() : projectsPage();
+      page.innerHTML = state.page === 'materials' ? materialsAuditPage() : state.page === 'materials-dashboard' ? materialDashboardPage() : projectsPage();
     } else {
       await refreshPlFiles();
       page.innerHTML = adminPage();
@@ -696,7 +632,7 @@ async function navigate() {
     return;
   }
   const key = location.hash.replace(/^#\/?/, '') || 'overview';
-  state.page = ['overview','materials','btp','btp-dates','projects'].includes(key) ? key : 'overview';
+  state.page = ['overview','materials','materials-dashboard','projects'].includes(key) ? key : 'overview';
   shell(); await renderPage();
 }
 async function logout() {

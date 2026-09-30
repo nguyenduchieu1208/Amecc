@@ -75,7 +75,7 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
 
     const workbook = xlsx.read(readFileSync(workbookPath), { type: 'buffer', cellDates: false, bookVBA: false });
     const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', xlsx);
-    assert.equal(payload.records.length, 12698);
+    assert.equal(payload.records.length, 12688);
     const env = { DB: createD1(database) };
 
     const begun = await post(env, token, {
@@ -97,7 +97,7 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
       assert.equal(chunk.status, 200, `staging request at row ${start} failed: ${await chunk.text()}`);
     }
     assert.equal(Number(database.prepare('SELECT COUNT(*) AS total FROM materials WHERE project_code = ?').get('A290').total), 1);
-    assert.equal(Number(database.prepare('SELECT COUNT(*) AS total FROM material_import_rows WHERE import_id = ?').get(session.import_id).total), 12698);
+    assert.equal(Number(database.prepare('SELECT COUNT(*) AS total FROM material_import_rows WHERE import_id = ?').get(session.import_id).total), 12688);
 
     database.exec(`CREATE TRIGGER fail_a290_commit BEFORE INSERT ON materials
       WHEN NEW.project_code = 'A290' BEGIN SELECT RAISE(ABORT, 'forced test failure'); END`);
@@ -114,15 +114,15 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     assert.equal(database.prepare("SELECT drawing FROM materials WHERE project_code = 'A290'").get().drawing, 'OLD-ROW');
     assert.equal(database.prepare("SELECT source_file FROM projects WHERE code = 'A290'").get().source_file, 'ExistingPL.xlsx');
     assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM import_runs WHERE project_code = 'A290'").get().total), 1);
-    assert.equal(Number(database.prepare('SELECT COUNT(*) AS total FROM material_import_rows WHERE import_id = ?').get(session.import_id).total), 12698);
+    assert.equal(Number(database.prepare('SELECT COUNT(*) AS total FROM material_import_rows WHERE import_id = ?').get(session.import_id).total), 12688);
 
     database.exec('DROP TRIGGER fail_a290_commit');
     const committed = await post(env, token, { action: 'commit', import_id: session.import_id });
     const committedBody = await committed.text();
     assert.equal(committed.status, 200, committedBody);
     const result = JSON.parse(committedBody);
-    assert.equal(result.imported_rows, 12698);
-    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM materials WHERE project_code = 'A290' AND source_file = 'A290PL.xlsx'").get().total), 12698);
+    assert.equal(result.imported_rows, 12688);
+    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM materials WHERE project_code = 'A290' AND source_file = 'A290PL.xlsx'").get().total), 12688);
     assert.equal(database.prepare("SELECT source_file FROM projects WHERE code = 'A290'").get().source_file, 'A290PL.xlsx');
     assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM import_runs WHERE project_code = 'A290'").get().total), 2);
     assert.equal(Number(database.prepare('SELECT COUNT(*) AS total FROM material_import_rows WHERE import_id = ?').get(session.import_id).total), 0);
