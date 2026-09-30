@@ -3,7 +3,7 @@ const ADMIN_MODE = /(?:^|\/)admin\.html$/.test(window.location.pathname);
 import { projectCodeFromFilename, readMaterialWorkbook } from './material-import.js';
 import { getBtpShortageQuantity, getBtpShortageWeight } from './material-search.js';
 import { formatMaterialDate } from './material-display.js';
-import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate, listBtpReceiptDates } from './shortage-export.js';
+import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortage-export.js';
 import { renderMaterialDashboard } from './material-dashboard.js';
 import { buildMaterialAuditRows, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 const app = document.querySelector('#app');
@@ -221,8 +221,6 @@ function materialsAuditPage() {
   const options = auditSheetOptions();
   const selected = auditSelectedKeys(options);
   const visibleRows = filteredMaterialAuditRows({ options });
-  const btpRows = (state.btpData?.rows || []).filter((row) => selected.has(materialSheetKey(row.source_file, row.source_sheet)));
-  const receiptDates = listBtpReceiptDates(btpRows);
   const shortageCount = visibleRows.filter((row) => row.btp && getBtpShortageQuantity(row.btp) > 0).length;
   const unmatchedCount = visibleRows.filter((row) => row.bomStatus !== 'matched' || row.qldaStatus !== 'matched').length;
   const pageSize = 100;
@@ -233,7 +231,6 @@ function materialsAuditPage() {
   const allSelected = options.length > 0 && selected.size === options.length;
   const sheetOptionsMarkup = options.map((option) => `<label class="sheet-check-option"><input type="checkbox" data-material-sheet value="${esc(option.key)}" ${selected.has(option.key) ? 'checked' : ''}><span>${esc(option.source_sheet)}</span><small>${esc(option.source_file)}</small></label>`).join('');
   const selectedLabel = allSelected ? `Tất cả sheet (${options.length})` : `${selected.size}/${options.length} sheet`;
-  const dateOptions = receiptDates.map((date) => `<option value="${esc(date)}" ${state.materialReceiptDateFilter === date ? 'selected' : ''}>${esc(formatMaterialDate(date) || date)}</option>`).join('');
   const filteredBtp = visibleRows.filter((row) => row.btp).map((row) => row.btp);
   const project = state.projects.find((item) => item.code === state.currentProject);
   const filename = state.btpData?.rows?.[0]?.source_file || state.data?.rows?.[0]?.source_file || `${state.currentProject}PL.xlsx`;
@@ -242,7 +239,7 @@ function materialsAuditPage() {
     <section class="material-audit-controls" aria-label="Lọc và xuất dữ liệu BOM, BTP">
       <div class="audit-filter-grid">
         <label class="filter-label">Sheet BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
-        <label class="filter-label">Ngày nhận<select id="materialReceiptDateFilter"><option value="">Tất cả ngày nhận</option>${dateOptions}</select></label>
+        <label class="filter-label">Ngày nhận<div class="date-filter-control"><input type="date" id="materialReceiptDateFilter" value="${esc(state.materialReceiptDateFilter)}" aria-label="Chọn hoặc nhập ngày nhận" title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp">${state.materialReceiptDateFilter ? '<button class="date-filter-clear" id="clearMaterialReceiptDate" type="button" title="Xem tất cả ngày">Xóa</button>' : ''}</div></label>
         <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
         <label class="search-box audit-search">${icon('search')}<input id="materialSearch" placeholder="Tìm mã BTP, chủng loại, DVG, size, ghi chú…" value="${esc(state.materialSearch)}"></label>
         <button class="button primary audit-export-button" id="exportBtpShortage" type="button" ${shortageCount ? '' : 'disabled'}>${icon('download')}<span>Xuất List thiếu</span></button>
@@ -396,6 +393,11 @@ function bindPage() {
   });
   document.querySelector('#materialReceiptDateFilter')?.addEventListener('change', (event) => {
     state.materialReceiptDateFilter = event.currentTarget.value;
+    state.materialPageIndex = 0;
+    rerenderAudit();
+  });
+  document.querySelector('#clearMaterialReceiptDate')?.addEventListener('click', () => {
+    state.materialReceiptDateFilter = '';
     state.materialPageIndex = 0;
     rerenderAudit();
   });

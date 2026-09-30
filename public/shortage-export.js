@@ -55,7 +55,9 @@ export function listBtpReceiptDates(rows) {
 
 export function filterBtpRowsByReceiptDate(rows, selectedDate) {
   if (!selectedDate) return Array.isArray(rows) ? rows : [];
-  return (Array.isArray(rows) ? rows : []).filter((row) => receiptEvents(row?.daily_progress).some((event) => event.date === selectedDate));
+  const selectedDateKey = dateSortKey(selectedDate);
+  return (Array.isArray(rows) ? rows : []).filter((row) => receiptEvents(row?.daily_progress)
+    .some((event) => dateSortKey(event.date) === selectedDateKey));
 }
 
 function selectedSheetKeys(selectedSheets) {

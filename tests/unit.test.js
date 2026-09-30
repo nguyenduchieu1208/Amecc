@@ -9,7 +9,7 @@ import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterM
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 import { renderMaterialDashboard } from '../public/material-dashboard.js';
 import { buildMaterialAuditRows, linkBtpToBom, findProgressForAssembly } from '../public/material-linkage.js';
-import { buildBtpShortageTemplate } from '../public/shortage-export.js';
+import { buildBtpShortageTemplate, filterBtpRowsByReceiptDate } from '../public/shortage-export.js';
 import { fillTemplateWorkbook } from '../public/template-xlsx.js';
 import { unzipSync } from '../public/vendor/fflate.mjs';
 
@@ -158,7 +158,7 @@ test('BTP view shows only the requested fields, with Dashboard as a separate mat
   assert.match(app, /href="#materials-dashboard">Dashboard BOM &amp; vật tư/);
   assert.doesNotMatch(app, /href="#btp(?:-dates)?"/);
   assert.match(app, /<input type="checkbox" data-material-sheet/);
-  assert.match(auditPage, /id="materialReceiptDateFilter"[\s\S]*id="materialStatusFilter"[\s\S]*id="materialSearch"[\s\S]*id="exportBtpShortage"/);
+  assert.match(auditPage, /type="date" id="materialReceiptDateFilter"[\s\S]*id="clearMaterialReceiptDate"[\s\S]*id="materialStatusFilter"[\s\S]*id="materialSearch"[\s\S]*id="exportBtpShortage"/);
   assert.ok(auditPage.indexOf('id="exportBtpShortage"') < auditPage.indexOf('<table'));
   assert.match(auditPage, /Mã BTP \(Chi tiết\)[\s\S]*Chủng loại[\s\S]*DVG[\s\S]*Quy cách \(Size\)[\s\S]*Chiều dài \(mm\)[\s\S]*SL thiết kế[\s\S]*Đã nhận[\s\S]*Còn thiếu[\s\S]*Tiến độ theo ngày[\s\S]*Ktra nối[\s\S]*Trạng thái[\s\S]*Ghi chú/);
   assert.doesNotMatch(auditPage, /<th>Mã BOM|<th>Nối QLDA|<th>Sheet nguồn/);
@@ -200,8 +200,18 @@ test('A290 6HH-43 uses the date on its receipt record as the displayed receipt d
   assert.equal(materialRow.delivery_date, '2026-05-21', 'the date recorded on the receipt/issue record is the receipt date');
   assert.match(app, /function auditReceiptEvents\(row\)/);
   assert.match(app, /row\?\.btp\?\.daily_progress/);
-  assert.match(app, /listBtpReceiptDates\(btpRows\)/);
+  assert.match(app, /title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp"/);
   assert.doesNotMatch(app, /Ngày phát hành:/);
+});
+
+test('BTP receipt date filter accepts calendar ISO dates and stored Vietnamese dates', () => {
+  const rows = [
+    { part_no:'BTP-1', daily_progress:'29/09/2026: 1; 30/09/2026: 2' },
+    { part_no:'BTP-2', daily_progress:'01/10/2026: 1' },
+  ];
+  assert.deepEqual(filterBtpRowsByReceiptDate(rows, '2026-09-30').map((row) => row.part_no), ['BTP-1']);
+  assert.deepEqual(filterBtpRowsByReceiptDate(rows, '30/09/2026').map((row) => row.part_no), ['BTP-1']);
+  assert.equal(filterBtpRowsByReceiptDate(rows, '').length, 2);
 });
 
 test('material receipt dates fall back to child rows and display as Vietnamese dates', () => {
