@@ -176,35 +176,21 @@ function auditStatusClass(status) {
 }
 function auditReceiptEvents(row) {
   const entries = String(row?.btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean);
-  return entries.length ? `<span class="audit-receipt-list">${entries.map((event) => `<span>${fmt(event.replace(/:\s*/, ' · '))}</span>`).join('')}</span>` : '<span class="muted">Chưa có ngày nhận</span>';
+  return entries.length ? `<span class="audit-receipt-list">${entries.map((event) => `<span>${fmt(event.replace(/:\s*/, ': '))}</span>`).join('')}</span>` : '<span class="muted">Chưa có ngày nhận</span>';
 }
-function auditFieldMarkup(label, value, className = '') {
-  return `<div class="btp-card-field ${className}"><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
-}
-function auditBtpCardMarkup(row) {
+function auditBtpTableRowMarkup(row) {
   const btp = row.btp;
   if (!btp) {
-    const bomPart = row.bomLine?.part_no || row.bomLine?.description || 'Dòng BOM chưa có BTP';
-    return `<article class="btp-item-card btp-missing-card"><strong>BOM chưa có BTP</strong><span>${fmt(bomPart)}</span></article>`;
+    const bomPart = row.bomLine?.part_no || '—';
+    return `<tr class="btp-missing-row"><td class="btp-frozen-code audit-code">${fmt(bomPart)}</td><td>—</td><td>—</td><td>—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td><span class="muted">Chưa có ngày</span></td><td>—</td><td><span class="status-pill danger">Chưa có BTP</span></td><td>BOM chưa có dòng BTP</td></tr>`;
   }
   const remaining = getBtpShortageQuantity(btp);
   const status = btp.status || auditStatus(row);
-  return `<article class="btp-item-card">
-    <div class="btp-item-code"><span>Mã BTP (Chi tiết)</span><strong class="audit-code">${fmt(btp.part_no)}</strong></div>
-    <dl class="btp-card-fields">
-      ${auditFieldMarkup('Chủng loại',fmt(btp.material_type))}
-      ${auditFieldMarkup('DVG',fmt(btp.unit))}
-      ${auditFieldMarkup('Quy cách (Size)',fmt(btp.size))}
-      ${auditFieldMarkup('Chiều dài (mm)',fmt(btp.length_mm),'numeric-cell')}
-      ${auditFieldMarkup('SL thiết kế',fmt(btp.design_quantity),'numeric-cell')}
-      ${auditFieldMarkup('Đã nhận',fmt(btp.received),'numeric-cell')}
-      ${auditFieldMarkup('Còn thiếu',fmt(remaining),`numeric-cell ${remaining > 0 ? 'shortage-value' : ''}`)}
-      ${auditFieldMarkup('Tiến độ theo ngày',auditReceiptEvents(row),'btp-card-dates')}
-      ${auditFieldMarkup('Ktra nối',fmt(btp.joint_check))}
-      ${auditFieldMarkup('Trạng thái',`<span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span>`)}
-      ${auditFieldMarkup('Ghi chú',fmt(btp.note || ''),'btp-card-note')}
-    </dl>
-  </article>`;
+  const materialType = String(btp.material_type || '').toLocaleLowerCase();
+  const typeClass = materialType.includes('shape') ? 'shape' : materialType.includes('plate') ? 'plate' : '';
+  return `<tr class="${remaining === 0 ? 'btp-complete-row' : ''}"><td class="btp-frozen-code audit-code">${fmt(btp.part_no)}</td><td><span class="btp-type-chip ${typeClass}">${fmt(btp.material_type)}</span></td><td><span class="btp-unit-chip">${fmt(btp.unit)}</span></td><td>${fmt(btp.size)}</td>
+    <td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell received-value">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td>
+    <td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${fmt(btp.joint_check)}</td><td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
 }
 function auditBomGroups(rows) {
   const groups = new Map();
@@ -236,8 +222,8 @@ function auditBomGroupMarkup(rows) {
   const drawing = parent?.drawing ? `<span class="bom-meta-chip">${fmt(parent.drawing)}</span>` : '';
   const statusClass = status === 'Đã đủ' ? 'success' : status === 'Đang về' ? 'warning' : 'neutral';
   return `<details class="bom-btp-group">
-    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${fmt(Number(progress.toFixed(1)))}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span></summary>
-    <div class="bom-btp-card-list">${rows.map(auditBtpCardMarkup).join('')}</div>
+    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${progress.toFixed(1)}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span></summary>
+    <div class="bom-btp-table-wrap"><table class="bom-btp-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${rows.map(auditBtpTableRowMarkup).join('')}</tbody></table></div>
   </details>`;
 }
 function materialAuditRows() {

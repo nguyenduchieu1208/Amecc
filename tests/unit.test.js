@@ -141,7 +141,7 @@ test('material shortage report quantity prefers remaining and falls back to requ
   assert.equal(getMaterialShortageQuantity({ quantity:10 }), null);
 });
 
-test('BTP view shows only the requested fields, with Dashboard as a separate material sidebar tab', async () => {
+test('BTP view uses expandable BOM cards with the requested detail table and separate Dashboard tab', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync('public/app.js', 'utf8');
   const styles = readFileSync('public/styles.css', 'utf8');
@@ -149,14 +149,15 @@ test('BTP view shows only the requested fields, with Dashboard as a separate mat
   const auditEnd = app.indexOf('function materialDashboardPage()', auditStart);
   const auditPage = app.slice(auditStart, auditEnd);
   assert.ok(auditStart >= 0 && auditEnd > auditStart, 'BOM/BTP audit table must be the materials view');
-  assert.equal((auditPage.match(/<table\b/g) || []).length, 0, 'BTP rows should render as cards inside BOM groups');
   assert.match(auditPage, /pageGroups\.map\(auditBomGroupMarkup\)/);
   assert.match(auditPage, /<section class="material-audit-controls"[\s\S]*\$\{projectSelect\(\)\}[\s\S]*id="materialSheetDropdown"/);
   assert.match(styles, /\.audit-filter-grid select,\.sheet-multi-select>summary\{width:100%;min-width:0/);
-  assert.match(app, /function auditBtpCardMarkup\(row\)/);
+  assert.match(app, /function auditBtpTableRowMarkup\(row\)/);
   assert.match(app, /function auditBomGroupMarkup\(rows\)/);
   assert.match(app, /<details class="bom-btp-group">/);
-  assert.match(app, /<summary class="bom-btp-group-summary">[\s\S]*<div class="bom-btp-card-list">/);
+  assert.match(app, /<summary class="bom-btp-group-summary">[\s\S]*<div class="bom-btp-table-wrap"><table class="bom-btp-table">/);
+  assert.match(app, /event\.replace\(\/:\\s\*\/, ': '\)/);
+  assert.match(app, /\$\{progress\.toFixed\(1\)\}%/);
   assert.ok(app.includes('BTP con') && app.includes('bom-group-progress'));
   assert.match(app, /class="sidebar-settings"[\s\S]*?id="themeSelect"/);
   assert.match(app, /id="sidebarCollapse"/);
@@ -172,12 +173,13 @@ test('BTP view shows only the requested fields, with Dashboard as a separate mat
   assert.match(app, /state\.materialUnitFilter && String\(row\.btp\?\.unit/);
   assert.match(auditPage, /id="materialStatusFilter"[\s\S]*id="materialSearch"[\s\S]*id="exportBtpShortage"/);
   assert.ok(auditPage.indexOf('id="exportBtpShortage"') < auditPage.indexOf('class="bom-btp-groups"'));
-  assert.match(app, /Mã BTP \(Chi tiết\)[\s\S]*Chủng loại[\s\S]*DVG[\s\S]*Quy cách \(Size\)[\s\S]*Chiều dài \(mm\)[\s\S]*SL thiết kế[\s\S]*Đã nhận[\s\S]*Còn thiếu[\s\S]*Tiến độ theo ngày[\s\S]*Ktra nối[\s\S]*Trạng thái[\s\S]*Ghi chú/);
+  assert.match(app, /<th>Mã BTP \(Chi tiết\)<\/th><th>Chủng loại<\/th><th>DVG<\/th><th>Quy cách \(Size\)<\/th><th>Chiều dài \(mm\)<\/th><th>SL thiết kế<\/th><th>Đã nhận<\/th><th>Còn thiếu<\/th><th>Tiến độ theo ngày<\/th><th>Ktra nối<\/th><th>Trạng thái<\/th><th>Ghi chú<\/th>/);
   assert.doesNotMatch(auditPage, /<th>Mã BOM|<th>Nối QLDA|<th>Sheet nguồn/);
   assert.match(auditPage, /state\.progressData\?\.rows/);
   assert.match(styles, /\.material-audit-controls\{position:sticky;top:82px/);
-  assert.match(styles, /\.btp-card-fields\{display:grid;grid-template-columns:repeat\(6/);
-  assert.match(styles, /@media\(max-width:580px\)[\s\S]*\.btp-card-fields\{grid-template-columns:repeat\(2/);
+  assert.match(styles, /\.bom-btp-table th:first-child,\.bom-btp-table td:first-child\{position:sticky;left:0/);
+  assert.match(styles, /@media\(max-width:580px\)[\s\S]*\.bom-btp-table\{min-width:1280px\}/);
+  assert.match(styles, /\.bom-btp-table-wrap\{max-height:min\(62vh,680px\);overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y\}/);
   assert.match(styles, /\.material-chart-svg\{display:block;width:auto;height:270px;max-width:none;flex:none\}/);
   assert.match(app, /state\.page === 'materials-dashboard' \? materialDashboardPage\(\)/);
   assert.doesNotMatch(app, /\['overview','materials','btp','btp-dates','projects'\]/);
