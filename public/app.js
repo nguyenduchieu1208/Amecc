@@ -224,12 +224,21 @@ function auditBomGroupMarkup(rows) {
   const parent = first?.bomParent;
   const sheet = materialSheetName(first?.btp_source_sheet || parent?.source_sheet || first?.source_sheet);
   const assembly = parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
-  const drawing = parent?.drawing ? `Bản vẽ: ${fmt(parent.drawing)} · ` : '';
-  const btpCount = rows.filter((row) => row.btp).length;
-  return `<section class="bom-btp-group">
-    <header class="bom-btp-group-heading"><div><span class="eyebrow">BOM · CẤU KIỆN</span><h4>${fmt(assembly)}</h4><p>${drawing}Sheet: ${fmt(sheet)}</p></div><span class="count-chip">Gồm ${fmt(btpCount)} BTP con</span></header>
+  const btpRows = rows.filter((row) => row.btp);
+  const btpCount = btpRows.length;
+  const receivedCount = btpRows.filter((row) => Number(row.btp.received) > 0).length;
+  const designTotal = btpRows.reduce((sum, row) => sum + (Number.isFinite(Number(row.btp.design_quantity)) ? Math.max(0, Number(row.btp.design_quantity)) : 0), 0);
+  const receivedTotal = btpRows.reduce((sum, row) => sum + (Number.isFinite(Number(row.btp.received)) ? Math.max(0, Number(row.btp.received)) : 0), 0);
+  const progress = designTotal > 0 ? Math.min(100, receivedTotal / designTotal * 100) : btpCount ? receivedCount / btpCount * 100 : 0;
+  const completeCount = btpRows.filter((row) => getBtpShortageQuantity(row.btp) === 0).length;
+  const status = !btpCount ? 'Chưa có BTP' : completeCount === btpCount ? 'Đã đủ' : receivedCount ? 'Đang về' : 'Chưa có';
+  const dimensions = parent?.size ? `<span class="bom-meta-chip">${fmt(parent.size)}</span>` : '';
+  const drawing = parent?.drawing ? `<span class="bom-meta-chip">${fmt(parent.drawing)}</span>` : '';
+  const statusClass = status === 'Đã đủ' ? 'success' : status === 'Đang về' ? 'warning' : 'neutral';
+  return `<details class="bom-btp-group">
+    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${fmt(Number(progress.toFixed(1)))}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span></summary>
     <div class="bom-btp-card-list">${rows.map(auditBtpCardMarkup).join('')}</div>
-  </section>`;
+  </details>`;
 }
 function materialAuditRows() {
   return buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:state.btpData?.rows || [], progressRows:state.progressData?.rows || [] });

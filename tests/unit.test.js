@@ -155,7 +155,9 @@ test('BTP view shows only the requested fields, with Dashboard as a separate mat
   assert.match(styles, /\.audit-filter-grid select,\.sheet-multi-select>summary\{width:100%;min-width:0/);
   assert.match(app, /function auditBtpCardMarkup\(row\)/);
   assert.match(app, /function auditBomGroupMarkup\(rows\)/);
-  assert.ok(app.includes('BOM · CẤU KIỆN') && app.includes('BTP con'));
+  assert.match(app, /<details class="bom-btp-group">/);
+  assert.match(app, /<summary class="bom-btp-group-summary">[\s\S]*<div class="bom-btp-card-list">/);
+  assert.ok(app.includes('BTP con') && app.includes('bom-group-progress'));
   assert.match(app, /class="sidebar-settings"[\s\S]*?id="themeSelect"/);
   assert.match(app, /id="sidebarCollapse"/);
   assert.match(styles, /@media\(max-width:820px\)\{\.shell\.sidebar-collapsed \.sidebar\{width:min\(290px,86vw\);min-width:min\(290px,86vw\)/);
