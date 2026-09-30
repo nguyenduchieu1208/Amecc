@@ -78,22 +78,37 @@ function cellMatch(xml, address) {
   return xml.match(new RegExp(`<c\\b(?=[^>]*\\br="${escaped}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`));
 }
 
-function styleForColumn(xml, column, targetRow) {
-  for (let candidate = targetRow; candidate >= 13; candidate -= 1) {
-    const cell = cellMatch(xml, `${column}${candidate}`)?.[0];
-    const opening = cell?.match(/^<c\b[^>]*>/)?.[0];
-    const style = opening && xmlAttribute(opening, 's');
-    if (style !== null && style !== undefined) return style;
+function createStyleIndex(xml) {
+  const index = new Map();
+  for (const rowMatchValue of xml.matchAll(/<row\b(?=[^>]*\br="\d+")[^>]*>[\s\S]*?<\/row>/g)) {
+    const row = rowMatchValue[0];
+    const number = Number(row.match(/<row\b[^>]*\br="(\d+)"/)?.[1]);
+    for (const cell of row.matchAll(/<c\b[^>]*\br="([A-Z]+\d+)"[^>]*(?:\/>|>[\s\S]*?<\/c>)/g)) {
+      const opening = cell[0].match(/^<c\b[^>]*>/)?.[0];
+      const style = opening && xmlAttribute(opening, 's');
+      if (style === null || style === undefined) continue;
+      const column = cell[1].match(/^[A-Z]+/)[0];
+      if (!index.has(column)) index.set(column, []);
+      index.get(column).push([number, style]);
+    }
   }
-  return null;
+  return index;
 }
 
-function insertCell(xml, address, opening, content) {
-  const targetRow = rowNumber(address);
-  const row = rowMatch(xml, targetRow);
-  if (!row) throw new Error(`Không thể tìm dòng ${targetRow} trong file mẫu.`);
-  const rowXml = row[0];
-  const targetColumn = columnNumber(address);
+function styleForColumn(index, column, targetRow) {
+  const styles = index.get(column) || [];
+  let low = 0;
+  let high = styles.length - 1;
+  let match = -1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (styles[middle][0] <= targetRow) { match = middle; low = middle + 1; }
+    else high = middle - 1;
+  }
+  return match >= 0 && styles[match][0] >= 13 ? styles[match][1] : null;
+}
+
+function insertCellInRow(rowXml, address, opening, content, targetColumn) {
   const cells = [...rowXml.matchAll(/<c\b[^>]*\br="([A-Z]+\d+)"[^>]*(?:\/>|>[\s\S]*?<\/c>)/g)];
   const before = cells.find((match) => columnNumber(match[1]) > targetColumn);
   const insertAt = before ? before.index : rowXml.lastIndexOf('</row>');
@@ -106,21 +121,26 @@ function insertCell(xml, address, opening, content) {
     const lastColumn = Math.max(Number(existingSpan[2]), targetColumn);
     replacement = replacement.replace(/(<row\b[^>]*\bspans=")[^"]*"/, `$1${firstColumn}:${lastColumn}"`);
   }
-  return xml.slice(0, row.index) + replacement + xml.slice(row.index + rowXml.length);
+  return replacement;
 }
 
-function setCellValue(xml, address, value) {
-  const cell = cellMatch(xml, address);
+function valueCellContent(value) {
+  const isNumber = typeof value === 'number' && Number.isFinite(value);
+  return isNumber
+    ? `<v>${String(value)}</v>`
+    : `<is><t${/^\s|\s$/.test(String(value)) ? ' xml:space="preserve"' : ''}>${escapeXml(value)}</t></is>`;
+}
+
+function setCellValueInRow(rowXml, address, value, workbookXml) {
+  const targetColumn = columnNumber(address);
+  const cell = cellMatch(rowXml, address);
   let opening = cell?.[0].match(/^<c\b[^>]*>/)?.[0] || null;
   if (!opening) {
     const column = address.match(/^[A-Z]+/i)[0].toUpperCase();
-    const style = styleForColumn(xml, column, rowNumber(address));
+    const style = styleForColumn(workbookXml, column, rowNumber(address));
     const isNumber = typeof value === 'number' && Number.isFinite(value);
     opening = `<c r="${address}"${style ? ` s="${style}"` : ''}${isNumber ? '' : ' t="inlineStr"'}>`;
-    const content = isNumber
-      ? `<v>${String(value)}</v>`
-      : `<is><t${/^\s|\s$/.test(String(value)) ? ' xml:space="preserve"' : ''}>${escapeXml(value)}</t></is>`;
-    return insertCell(xml, address, opening, content);
+    return insertCellInRow(rowXml, address, opening, valueCellContent(value), targetColumn);
   }
 
   let attributes = opening.slice(2, -1).replace(/\/$/, '').trim();
@@ -128,10 +148,7 @@ function setCellValue(xml, address, value) {
   const isNumber = typeof value === 'number' && Number.isFinite(value);
   const type = isNumber ? '' : ' t="inlineStr"';
   const nextOpening = `<c ${attributes}${type}>`;
-  const content = isNumber
-    ? `<v>${String(value)}</v>`
-    : `<is><t${/^\s|\s$/.test(String(value)) ? ' xml:space="preserve"' : ''}>${escapeXml(value)}</t></is>`;
-  return xml.slice(0, cell.index) + `${nextOpening}${content}</c>` + xml.slice(cell.index + cell[0].length);
+  return rowXml.slice(0, cell.index) + `${nextOpening}${valueCellContent(value)}</c>` + rowXml.slice(cell.index + cell[0].length);
 }
 
 function extendDimension(xml, endRow) {
@@ -162,8 +179,24 @@ export function fillTemplateWorkbook(templateBytes, sheetName, cellValues) {
   const entries = Object.entries(cellValues || {}).filter(([, value]) => value !== null && value !== undefined && value !== '');
   const endRow = Math.max(0, ...entries.map(([address]) => rowNumber(address)));
   let xml = decoder.decode(files[path]);
+  const stylesByColumn = createStyleIndex(xml);
   xml = cloneRowsThrough(xml, endRow);
-  for (const [address, value] of entries) xml = setCellValue(xml, address.toUpperCase(), value);
+  const valuesByRow = new Map();
+  for (const [address, value] of entries) {
+    const upperAddress = address.toUpperCase();
+    const row = rowNumber(upperAddress);
+    if (!valuesByRow.has(row)) valuesByRow.set(row, []);
+    valuesByRow.get(row).push([upperAddress, value]);
+  }
+  for (const values of valuesByRow.values()) values.sort(([left], [right]) => columnNumber(left) - columnNumber(right));
+  xml = xml.replace(/<row\b(?=[^>]*\br="\d+")[^>]*>[\s\S]*?<\/row>/g, (rowXml) => {
+    const rowNumberMatch = rowXml.match(/<row\b[^>]*\br="(\d+)"/);
+    const values = valuesByRow.get(Number(rowNumberMatch?.[1]));
+    if (!values) return rowXml;
+    valuesByRow.delete(Number(rowNumberMatch[1]));
+    return values.reduce((currentRow, [address, value]) => setCellValueInRow(currentRow, address, value, stylesByColumn), rowXml);
+  });
+  if (valuesByRow.size) throw new Error(`Không thể tìm dòng ${valuesByRow.keys().next().value} trong file mẫu.`);
   if (endRow) {
     xml = extendDimension(xml, endRow);
     xml = extendAutoFilter(xml, endRow);
