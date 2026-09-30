@@ -1,0 +1,32 @@
+/* Theme palettes for the workspace. Kept separate so the shared layout stays easy to maintain. */
+.shell {
+  --blue: #185fc2;
+  --chart-accent: #2586d8;
+  --chart-secondary: #e8a341;
+  --sidebar-top: #133b79;
+  --sidebar-bottom: #092d68;
+  --sidebar-text: #e9f1ff;
+  --sidebar-muted: #bdcce0;
+  --sidebar-accent: #78b2ff;
+}
+.shell.theme-light { --blue:#185fc2; --chart-accent:#2586d8; --chart-secondary:#e8a341; --sidebar-top:#174681; --sidebar-bottom:#092d68; --sidebar-text:#e9f1ff; --sidebar-muted:#bdcce0; --sidebar-accent:#78b2ff; }
+.shell.theme-midnight { --surface:#172334; --canvas:#101a28; --ink:#e8eef7; --soft:#202e41; --line:#2c3c51; --muted:#a8b6c8; --blue:#83b4ff; --chart-accent:#62a9ff; --chart-secondary:#f2b65f; --sidebar-top:#101c30; --sidebar-bottom:#091321; --sidebar-text:#e8eef7; --sidebar-muted:#afbdd0; --sidebar-accent:#91c2ff; --shadow:0 10px 32px rgba(0,0,0,.2); }
+.shell.theme-paper { --surface:#fffdf7; --canvas:#f5f0e4; --ink:#352f26; --soft:#f7f2e8; --line:#e7ddc9; --muted:#897f70; --blue:#87633b; --chart-accent:#a36b3f; --chart-secondary:#78916a; --sidebar-top:#56483a; --sidebar-bottom:#372d24; --sidebar-text:#fffaf0; --sidebar-muted:#d9cbb5; --sidebar-accent:#f0c98f; --shadow:0 10px 32px rgba(62,47,30,.07); }
+.shell.theme-ocean { --surface:#f8fdff; --canvas:#eaf5f8; --ink:#173247; --soft:#edf7fa; --line:#d5e7ec; --muted:#668396; --blue:#117f9a; --chart-accent:#1298b5; --chart-secondary:#e4a04b; --sidebar-top:#11657b; --sidebar-bottom:#073b56; --sidebar-text:#eaffff; --sidebar-muted:#b6dce5; --sidebar-accent:#69d3e4; --shadow:0 10px 32px rgba(15,70,90,.07); }
+.shell.theme-emerald { --surface:#fbfefc; --canvas:#edf6f0; --ink:#203a2c; --soft:#f0f8f2; --line:#d8e9dc; --muted:#6d8876; --blue:#187850; --chart-accent:#16976b; --chart-secondary:#d69839; --sidebar-top:#176547; --sidebar-bottom:#0c3f35; --sidebar-text:#effff5; --sidebar-muted:#b9d9c7; --sidebar-accent:#83e0ad; --shadow:0 10px 32px rgba(25,82,53,.07); }
+.shell.theme-violet { --surface:#fcfbff; --canvas:#f1eff9; --ink:#2f2c43; --soft:#f5f3fb; --line:#e2deef; --muted:#817c9c; --blue:#6651b5; --chart-accent:#795ce0; --chart-secondary:#e39a50; --sidebar-top:#51418e; --sidebar-bottom:#30275d; --sidebar-text:#f7f4ff; --sidebar-muted:#d0c9ee; --sidebar-accent:#c0afff; --shadow:0 10px 32px rgba(55,43,102,.08); }
+.shell.theme-graphite { --surface:#f8fafc; --canvas:#e9edf2; --ink:#26313c; --soft:#eff2f6; --line:#d7dee6; --muted:#71808d; --blue:#435f79; --chart-accent:#527f9d; --chart-secondary:#d28b44; --sidebar-top:#394957; --sidebar-bottom:#202b35; --sidebar-text:#f2f5f8; --sidebar-muted:#c3cbd3; --sidebar-accent:#a9d6ef; --shadow:0 10px 32px rgba(29,43,56,.08); }
+.shell.theme-sunset { --surface:#fffaf7; --canvas:#fbf0eb; --ink:#432e2d; --soft:#fff3ee; --line:#efdcd4; --muted:#9a7770; --blue:#b84f50; --chart-accent:#db6857; --chart-secondary:#e7a63d; --sidebar-top:#98454d; --sidebar-bottom:#542d48; --sidebar-text:#fff6f1; --sidebar-muted:#ecc6bd; --sidebar-accent:#ffc17e; --shadow:0 10px 32px rgba(109,50,57,.08); }
+
+.shell .sidebar { background:linear-gradient(155deg,var(--sidebar-top),var(--sidebar-bottom) 78%); color:var(--sidebar-text); }
+.shell .sidebar .theme-select { background:color-mix(in srgb,var(--sidebar-bottom),white 8%); color:var(--sidebar-text); }
+.shell .sidebar .theme-select option { background:var(--surface); color:var(--ink); }
+.shell .nav-link.active { box-shadow:inset 2px 0 var(--sidebar-accent); }
+.shell .button.primary { background:var(--blue); }
+.shell .button.primary:hover { filter:brightness(.92); }
+.shell .chart-line,.shell .chart-point { stroke:var(--chart-accent); }
+.shell .chart-point { fill:var(--surface); }
+.shell .chart-area { fill:color-mix(in srgb,var(--chart-accent),transparent 88%); }
+.shell .chart-bar-received,.shell .legend-received { fill:var(--chart-accent); background:var(--chart-accent); }
+.shell .chart-bar-shortage,.shell .legend-shortage { fill:var(--chart-secondary); background:var(--chart-secondary); }
+.shell .search-highlight { background:#ffe58a; color:#5b3700; }

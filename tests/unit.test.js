@@ -145,6 +145,8 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   const { readFileSync } = await import('node:fs');
   const app = readFileSync('public/app.js', 'utf8');
   const styles = readFileSync('public/styles.css', 'utf8');
+  const enhancements = readFileSync('public/workspace-enhancements.css', 'utf8');
+  const themes = readFileSync('public/themes.css', 'utf8');
   const auditStart = app.indexOf('function materialsAuditPage()');
   const auditEnd = app.indexOf('function materialDashboardPage()', auditStart);
   const auditPage = app.slice(auditStart, auditEnd);
@@ -152,8 +154,13 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(auditPage, /pageGroups\.map\(auditBomGroupMarkup\)/);
   assert.match(auditPage, /<section class="material-audit-controls"[\s\S]*\$\{projectSelect\(\)\}[\s\S]*id="materialSheetDropdown"/);
   assert.match(styles, /\.audit-filter-grid select,\.sheet-multi-select>summary\{width:100%;min-width:0/);
-  assert.match(app, /function auditBtpTableRowMarkup\(row\)/);
-  assert.match(app, /function auditBomGroupMarkup\(rows\)/);
+  assert.match(app, /function auditBtpTableRowMarkup\(row, query = ''\)/);
+  assert.match(app, /function auditBomGroupMarkup\(\{ rows, detailRows = rows, query = '' \}\)/);
+  assert.match(app, /const contextRows = search \? filteredMaterialAuditRows\(\{ options, includeSearch:false \}\) : visibleRows/);
+  assert.match(app, /const allGroups = auditBomGroups\(visibleRows, contextRows, search\)/);
+  assert.match(app, /allGroups\.slice\(pageIndex \* pageSize, \(pageIndex \+ 1\) \* pageSize\)/);
+  assert.match(app, /search-match-row/);
+  assert.match(enhancements, /\.bom-btp-table tbody tr\.search-match-row td/);
   assert.match(app, /<details class="bom-btp-group">/);
   assert.match(app, /<summary class="bom-btp-group-summary">[\s\S]*<div class="bom-btp-table-wrap"><table class="bom-btp-table">/);
   assert.match(app, /event\.replace\(\/:\\s\*\/, ': '\)/);
@@ -182,6 +189,16 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(styles, /\.bom-btp-table-wrap\{max-height:min\(62vh,680px\);overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y\}/);
   assert.match(styles, /\.material-chart-svg\{display:block;width:auto;height:270px;max-width:none;flex:none\}/);
   assert.match(app, /state\.page === 'materials-dashboard' \? materialDashboardPage\(\)/);
+  assert.match(app, /id="materialDashboardStartDate"/);
+  assert.match(app, /id="materialDashboardEndDate"/);
+  assert.match(app, /id="materialDashboardMetric"/);
+  assert.match(app, /addEventListener\('change', \(event\) => \{\s*state\.materialDashboardMetric/);
+  assert.match(app, /matchMedia\('\(max-width: 820px\)'\)/);
+  assert.match(themes, /theme-ocean/);
+  assert.match(themes, /theme-emerald/);
+  assert.match(themes, /theme-violet/);
+  assert.match(themes, /theme-graphite/);
+  assert.match(themes, /theme-sunset/);
   assert.doesNotMatch(app, /\['overview','materials','btp','btp-dates','projects'\]/);
   assert.match(app, /projectFilenameLabel\(project\)/);
   assert.match(app, /localeCompare\(String\(right\.code\), 'vi', \{ numeric:true, sensitivity:'base' \}\)/);
@@ -199,7 +216,26 @@ test('material dashboard charts cumulative receipt totals and received/shortage 
   assert.match(html, /01\/09\/2026 · lũy kế 1/);
   assert.match(html, /02\/09\/2026 · lũy kế 4/);
   assert.match(html, /DVG-A · đã nhận 3/);
-  assert.match(html, /DVG-A · còn thiếu 2/);
+  assert.match(html, /DVG-A · còn thiếu hiện tại 2 BTP/);
+});
+
+test('material dashboard filters a selected date range and calculates kg or tonnes from BTL U.Weight', () => {
+  const rows = [
+    { source_file:'A290PL.xlsx', source_sheet:'BTP-A290T1P1', source_row:14, part_no:'BTP-1', unit:'DVG-A', unit_weight:2, design_quantity:5, received:2, remaining:3, daily_progress:'31/08/2026: 1; 01/09/2026: 1; 02/09/2026: 2' },
+    { source_file:'A290PL.xlsx', source_sheet:'BTP-A290T1P1', source_row:15, part_no:'BTP-2', unit:'DVG-B', unit_weight:0.5, design_quantity:1, received:1, remaining:0, daily_progress:'31/08/2026: 1' },
+    { source_file:'A290PL.xlsx', source_sheet:'BTP-A290T1P1', source_row:16, part_no:'BTP-3', unit:'DVG-C', design_quantity:2, received:1, remaining:1, daily_progress:'02/09/2026: 1' },
+  ];
+  const kgHtml = renderMaterialDashboard(rows, 'A290 · A290T1P1', { from:'2026-09-01', to:'2026-09-02', metric:'kg' });
+  assert.match(kgHtml, /01\/09\/2026 · lũy kế 2 kg/);
+  assert.match(kgHtml, /02\/09\/2026 · lũy kế 6 kg/);
+  assert.match(kgHtml, /DVG-A · đã nhận 6 kg/);
+  assert.match(kgHtml, /DVG-A · còn thiếu hiện tại 6 kg/);
+  assert.doesNotMatch(kgHtml, /31\/08\/2026/);
+  assert.match(kgHtml, /1 lượt nhận và 1 dòng thiếu U\.Weight/);
+
+  const tonHtml = renderMaterialDashboard([rows[0]], 'A290 · A290T1P1', { from:'2026-09-01', to:'2026-09-02', metric:'ton' });
+  assert.match(tonHtml, /02\/09\/2026 · lũy kế 0,006 tấn/);
+  assert.match(tonHtml, /DVG-A · đã nhận 0,006 tấn/);
 });
 
 test('A290 6HH-43 uses the date on its receipt record as the displayed receipt date', async () => {

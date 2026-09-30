@@ -1,14 +1,16 @@
 const API_BASE = String(window.AMECC_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
 const ADMIN_MODE = /(?:^|\/)admin\.html$/.test(window.location.pathname);
 import { projectCodeFromFilename, readMaterialWorkbook } from './material-import.js';
-import { getBtpShortageQuantity, getBtpShortageWeight } from './material-search.js';
+import { getBtpShortageQuantity, getBtpShortageWeight, highlightMatch } from './material-search.js';
 import { formatMaterialDate } from './material-display.js';
 import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortage-export.js';
 import { renderMaterialDashboard } from './material-dashboard.js';
 import { buildMaterialAuditRows, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 const app = document.querySelector('#app');
-const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialDashboardSheetFilter: '', page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
-const themes = ['light', 'midnight', 'paper'];
+const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
+const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
+const savedTheme = localStorage.getItem('amecc-theme') || 'light';
+const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -18,6 +20,15 @@ function fmt(value) {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'number') return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(value);
   return esc(value);
+}
+function applyTheme(theme) {
+  if (!themes.includes(theme)) return;
+  state.theme = theme;
+  localStorage.setItem('amecc-theme', theme);
+  const shellElement = document.querySelector('.shell');
+  if (!shellElement) return;
+  shellElement.classList.remove(...themes.map((name) => `theme-${name}`));
+  shellElement.classList.add(`theme-${theme}`);
 }
 function icon(name) {
   const paths = {
@@ -65,7 +76,7 @@ function shell() {
       <a class="brand" href="${ADMIN_MODE ? './index.html' : '#overview'}" aria-label="AMECC - Trang tổng quan"><img src="./assets/logo.png" alt="AMECC"><span class="brand-caption">PROJECT CONTROL</span></a>
       ${navigation}
       <div class="sidebar-bottom">
-        <section class="sidebar-settings" aria-label="Cài đặt giao diện"><button class="settings-toggle" id="settingsToggle" type="button" aria-label="Mở cài đặt giao diện" title="Cài đặt giao diện">${icon('settings')}<span>Cài đặt giao diện</span></button><div class="settings-heading">CÀI ĐẶT GIAO DIỆN</div><label class="settings-theme-label">Theme<select class="theme-select" id="themeSelect" aria-label="Chọn giao diện">${themes.map((theme) => `<option value="${theme}" ${theme === state.theme ? 'selected' : ''}>${({ light:'Sáng', midnight:'Midnight', paper:'Giấy hồ sơ' })[theme]}</option>`).join('')}</select></label></section>
+        <section class="sidebar-settings" aria-label="Cài đặt giao diện"><button class="settings-toggle" id="settingsToggle" type="button" aria-label="Mở cài đặt giao diện" title="Cài đặt giao diện">${icon('settings')}<span>Cài đặt giao diện</span></button><div class="settings-heading">CÀI ĐẶT GIAO DIỆN</div><label class="settings-theme-label">Giao diện<select class="theme-select" id="themeSelect" aria-label="Chọn giao diện">${themes.map((theme) => `<option value="${theme}" ${theme === state.theme ? 'selected' : ''}>${themeLabels[theme]}</option>`).join('')}</select></label></section>
         <button class="sidebar-collapse" id="sidebarCollapse" type="button" aria-label="${state.sidebarCollapsed ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'}" title="${state.sidebarCollapsed ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'}">${icon('collapse')}<span>Thu gọn thanh bên</span></button>
         <div class="sidebar-foot"><span class="online-dot"></span><span>Hệ thống dữ liệu AMECC</span></div>
       </div>
@@ -77,10 +88,15 @@ function shell() {
       </header><section id="page" class="page" aria-live="polite"></section>
     </main>
   </div>`;
-  document.querySelector('#themeSelect').addEventListener('change', (event) => { state.theme = event.target.value; localStorage.setItem('amecc-theme', state.theme); shell(); renderPage(); });
+  document.querySelector('#themeSelect').addEventListener('change', (event) => applyTheme(event.currentTarget.value));
   document.querySelector('#sidebarCollapse').addEventListener('click', () => {
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      document.querySelector('.shell').classList.remove('drawer-open');
+      return;
+    }
     state.sidebarCollapsed = !state.sidebarCollapsed;
     localStorage.setItem('amecc-sidebar-collapsed', String(state.sidebarCollapsed));
+    if (state.sidebarCollapsed) document.querySelector('.sidebar-settings')?.classList.remove('theme-settings-open');
     document.querySelector('.shell').classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
     const button = document.querySelector('#sidebarCollapse');
     button.setAttribute('aria-label', state.sidebarCollapsed ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên');
@@ -178,39 +194,56 @@ function auditReceiptEvents(row) {
   const entries = String(row?.btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean);
   return entries.length ? `<span class="audit-receipt-list">${entries.map((event) => `<span>${fmt(event.replace(/:\s*/, ': '))}</span>`).join('')}</span>` : '<span class="muted">Chưa có ngày nhận</span>';
 }
-function auditBtpTableRowMarkup(row) {
+function auditDetailMatchesSearch(row, query) {
+  if (!query) return false;
+  const values = row.btp
+    ? [row.btp.part_no,row.btp.material_type,row.btp.description,row.btp.material,row.btp.unit,row.btp.size,row.btp.length_mm,row.btp.unit_weight,row.btp.total_weight,row.btp.design_quantity,row.btp.received,row.btp.remaining,row.btp.daily_progress,row.btp.joint_check,row.btp.status,row.btp.note,row.bomLine?.part_no,row.bomLine?.description,row.bomLine?.size]
+    : [row.bomLine?.part_no,row.bomLine?.description,row.bomLine?.size];
+  return values.filter((value) => value !== null && value !== undefined).join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase());
+}
+function auditBtpTableRowMarkup(row, query = '') {
   const btp = row.btp;
+  const matched = auditDetailMatchesSearch(row, query);
   if (!btp) {
     const bomPart = row.bomLine?.part_no || '—';
-    return `<tr class="btp-missing-row"><td class="btp-frozen-code audit-code">${fmt(bomPart)}</td><td>—</td><td>—</td><td>—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td><span class="muted">Chưa có ngày</span></td><td>—</td><td><span class="status-pill danger">Chưa có BTP</span></td><td>BOM chưa có dòng BTP</td></tr>`;
+    const code = query ? highlightMatch(bomPart, query) : fmt(bomPart);
+    return `<tr class="btp-missing-row ${matched ? 'search-match-row' : ''}"><td class="btp-frozen-code audit-code">${code}</td><td>—</td><td>—</td><td>—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td class="numeric-cell">—</td><td><span class="muted">Chưa có ngày</span></td><td>—</td><td><span class="status-pill danger">Chưa có BTP</span></td><td>BOM chưa có dòng BTP</td></tr>`;
   }
   const remaining = getBtpShortageQuantity(btp);
   const status = btp.status || auditStatus(row);
   const materialType = String(btp.material_type || '').toLocaleLowerCase();
   const typeClass = materialType.includes('shape') ? 'shape' : materialType.includes('plate') ? 'plate' : '';
-  return `<tr class="${remaining === 0 ? 'btp-complete-row' : ''}"><td class="btp-frozen-code audit-code">${fmt(btp.part_no)}</td><td><span class="btp-type-chip ${typeClass}">${fmt(btp.material_type)}</span></td><td><span class="btp-unit-chip">${fmt(btp.unit)}</span></td><td>${fmt(btp.size)}</td>
-    <td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell received-value">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td>
-    <td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${fmt(btp.joint_check)}</td><td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
+  const partNo = query ? highlightMatch(btp.part_no, query) : fmt(btp.part_no);
+  return `<tr class="${[remaining === 0 ? 'btp-complete-row' : '',matched ? 'search-match-row' : ''].filter(Boolean).join(' ')}"><td class="btp-frozen-code audit-code">${partNo}</td><td><span class="btp-type-chip ${typeClass}">${fmt(btp.material_type)}</span></td><td><span class="btp-unit-chip">${fmt(btp.unit)}</span></td><td>${fmt(btp.size)}</td><td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell received-value">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td><td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${fmt(btp.joint_check)}</td><td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
 }
-function auditBomGroups(rows) {
+function auditBomGroupKey(row) {
+  const parent = row.bomParent;
+  const sheet = materialSheetName(row.btp_source_sheet || row.source_sheet);
+  return parent?.assembly
+    ? `${row.bom_source_file || parent.source_file || row.source_file}|${materialSheetName(parent.source_sheet || row.source_sheet)}|${parent.assembly}`
+    : `${row.btp_source_file || row.source_file}|${sheet}|unlinked|${row.btp?.part_no || row.bomLine?.part_no || row.bomLine?.source_row || ''}`;
+}
+function auditBomGroups(rows, contextRows = rows, query = '') {
   const groups = new Map();
   for (const row of rows) {
-    const parent = row.bomParent;
-    const sheet = materialSheetName(row.btp_source_sheet || row.source_sheet);
-    const groupKey = parent?.assembly
-      ? `${row.bom_source_file || parent.source_file || row.source_file}|${materialSheetName(parent.source_sheet || row.source_sheet)}|${parent.assembly}`
-      : `${row.btp_source_file || row.source_file}|${sheet}|unlinked|${row.btp?.part_no || row.bomLine?.part_no || row.bomLine?.source_row || ''}`;
+    const groupKey = auditBomGroupKey(row);
     if (!groups.has(groupKey)) groups.set(groupKey, []);
     groups.get(groupKey).push(row);
   }
-  return [...groups.values()];
+  const contextByGroup = new Map();
+  for (const row of contextRows) {
+    const key = auditBomGroupKey(row);
+    if (!contextByGroup.has(key)) contextByGroup.set(key, []);
+    contextByGroup.get(key).push(row);
+  }
+  return [...groups].map(([key, groupRows]) => ({ rows:groupRows, detailRows:query ? contextByGroup.get(key) || groupRows : groupRows, query }));
 }
-function auditBomGroupMarkup(rows) {
-  const first = rows[0];
+function auditBomGroupMarkup({ rows, detailRows = rows, query = '' }) {
+  const first = detailRows[0] || rows[0];
   const parent = first?.bomParent;
   const sheet = materialSheetName(first?.btp_source_sheet || parent?.source_sheet || first?.source_sheet);
   const assembly = parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
-  const btpRows = rows.filter((row) => row.btp);
+  const btpRows = detailRows.filter((row) => row.btp);
   const btpCount = btpRows.length;
   const receivedCount = btpRows.filter((row) => Number(row.btp.received) > 0).length;
   const designTotal = btpRows.reduce((sum, row) => sum + (Number.isFinite(Number(row.btp.design_quantity)) ? Math.max(0, Number(row.btp.design_quantity)) : 0), 0);
@@ -218,12 +251,12 @@ function auditBomGroupMarkup(rows) {
   const progress = designTotal > 0 ? Math.min(100, receivedTotal / designTotal * 100) : btpCount ? receivedCount / btpCount * 100 : 0;
   const completeCount = btpRows.filter((row) => getBtpShortageQuantity(row.btp) === 0).length;
   const status = !btpCount ? 'Chưa có BTP' : completeCount === btpCount ? 'Đã đủ' : receivedCount ? 'Đang về' : 'Chưa có';
-  const dimensions = parent?.size ? `<span class="bom-meta-chip">${fmt(parent.size)}</span>` : '';
-  const drawing = parent?.drawing ? `<span class="bom-meta-chip">${fmt(parent.drawing)}</span>` : '';
+  const dimensions = parent?.size ? `<span class="bom-meta-chip">${query ? highlightMatch(parent.size, query) : fmt(parent.size)}</span>` : '';
+  const drawing = parent?.drawing ? `<span class="bom-meta-chip">${query ? highlightMatch(parent.drawing, query) : fmt(parent.drawing)}</span>` : '';
   const statusClass = status === 'Đã đủ' ? 'success' : status === 'Đang về' ? 'warning' : 'neutral';
   return `<details class="bom-btp-group">
-    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${progress.toFixed(1)}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span></summary>
-    <div class="bom-btp-table-wrap"><table class="bom-btp-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${rows.map(auditBtpTableRowMarkup).join('')}</tbody></table></div>
+    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${query ? highlightMatch(assembly, query) : fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${progress.toFixed(1)}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span></summary>
+    <div class="bom-btp-table-wrap"><table class="bom-btp-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${detailRows.map((row) => auditBtpTableRowMarkup(row, query)).join('')}</tbody></table></div>
   </details>`;
 }
 function materialAuditRows() {
@@ -239,7 +272,7 @@ function auditRowMatchesSheets(row, selected) {
   const sheet = row.btp ? row.btp.source_sheet : row.source_sheet;
   return selected.has(materialSheetKey(file, sheet));
 }
-function filteredMaterialAuditRows({ rows = materialAuditRows(), options = auditSheetOptions() } = {}) {
+function filteredMaterialAuditRows({ rows = materialAuditRows(), options = auditSheetOptions(), includeSearch = true } = {}) {
   const selected = auditSelectedKeys(options);
   const search = String(state.materialSearch || '').trim().toLocaleLowerCase();
   return rows.filter((row) => {
@@ -251,7 +284,7 @@ function filteredMaterialAuditRows({ rows = materialAuditRows(), options = audit
     if (state.materialStatusFilter === 'received' && !(Number(row.btp?.received) > 0)) return false;
     if (state.materialStatusFilter === 'no-btp' && row.kind !== 'bom-only') return false;
     if (state.materialStatusFilter === 'unlinked' && row.bomStatus === 'matched' && row.qldaStatus === 'matched') return false;
-    if (search && !materialAuditRowSearchText(row).includes(search)) return false;
+    if (includeSearch && search && !materialAuditRowSearchText(row).includes(search)) return false;
     return status !== 'Không dùng';
   }).sort((left, right) => Number(right.kind === 'bom-only') - Number(left.kind === 'bom-only')
     || Number(getBtpShortageQuantity(right.btp) || 0) - Number(getBtpShortageQuantity(left.btp) || 0)
@@ -262,17 +295,19 @@ function materialsAuditPage() {
   const options = auditSheetOptions();
   const selected = auditSelectedKeys(options);
   const visibleRows = filteredMaterialAuditRows({ options });
+  const search = String(state.materialSearch || '').trim();
+  const contextRows = search ? filteredMaterialAuditRows({ options, includeSearch:false }) : visibleRows;
   const selectedBtpRows = (state.btpData?.rows || []).filter((row) => selected.has(materialSheetKey(row.source_file, row.source_sheet)));
   const deliveryUnits = [...new Set(selectedBtpRows.map((row) => String(row.unit ?? '').trim()).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right, 'vi', { numeric:true, sensitivity:'base' }));
   const shortageCount = visibleRows.filter((row) => row.btp && getBtpShortageQuantity(row.btp) > 0).length;
   const unmatchedCount = visibleRows.filter((row) => row.bomStatus !== 'matched' || row.qldaStatus !== 'matched').length;
   const pageSize = 100;
-  const pageCount = Math.max(1, Math.ceil(visibleRows.length / pageSize));
+  const allGroups = auditBomGroups(visibleRows, contextRows, search);
+  const pageCount = Math.max(1, Math.ceil(allGroups.length / pageSize));
   state.materialPageIndex = Math.min(Math.max(0, state.materialPageIndex), pageCount - 1);
   const pageIndex = state.materialPageIndex;
-  const pageRows = visibleRows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
-  const pageGroups = auditBomGroups(pageRows);
+  const pageGroups = allGroups.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
   const allSelected = options.length > 0 && selected.size === options.length;
   const sheetOptionsMarkup = options.map((option) => `<label class="sheet-check-option"><input type="checkbox" data-material-sheet value="${esc(option.key)}" ${selected.has(option.key) ? 'checked' : ''}><span>${esc(option.source_sheet)}</span><small>${esc(option.source_file)}</small></label>`).join('');
   const selectedLabel = allSelected ? `Tất cả sheet (${options.length})` : `${selected.size}/${options.length} sheet`;
@@ -294,9 +329,9 @@ function materialsAuditPage() {
       <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
     </section>
     <div class="stats-grid compact audit-stats">${statCard('Dòng đối chiếu',visibleRows.length,'Theo sheet, ngày, trạng thái và từ khóa')}${statCard('Dòng BTP còn thiếu',shortageCount,'Được đưa vào List thiếu','red')}${statCard('BOM chưa có BTP',visibleRows.filter((row) => row.kind === 'bom-only').length,'Kiểm tra phần chưa được lập BTP','gold')}${statCard('Liên kết cần xem',unmatchedCount,'BOM hoặc QLDA chưa khớp','blue')}</div>
-    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${pageIndex * pageSize + (visibleRows.length ? 1 : 0)}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ${visibleRows.length}</span></div>
+    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${allGroups.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, allGroups.length)} / ${fmt(allGroups.length)} cấu kiện` : '0 cấu kiện'}</span></div>
     <div class="bom-btp-groups">${pageGroups.map(auditBomGroupMarkup).join('') || '<div class="empty-state"><strong>Không có dòng phù hợp</strong><p>Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</p></div>'}</div>
-    <div class="btp-pagination"><span>${visibleRows.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ` : ''}${fmt(visibleRows.length)} dòng</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
+    <div class="btp-pagination"><span>${fmt(allGroups.length)} cấu kiện · ${fmt(visibleRows.length)} dòng BTP phù hợp</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
     ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;
 }
 function materialDashboardPage() {
@@ -307,10 +342,11 @@ function materialDashboardPage() {
   const selectedLabel = state.materialDashboardSheetFilter
     ? options.find((option) => option.key === state.materialDashboardSheetFilter)?.source_sheet || 'Sheet đã chọn'
     : 'Toàn bộ sheet của dự án';
-  return `${heading('MATERIAL DASHBOARD · BOM & VẬT TƯ','Dashboard BOM & vật tư','Lũy kế số lượng nhận theo ngày và so sánh đã nhận / còn thiếu theo từng đơn vị giao.',projectSelect())}
-    <div class="audit-dashboard-filter"><label class="filter-label">Sheet dashboard<select id="materialDashboardSheetFilter"><option value="">Tất cả sheet (${options.length})</option>${options.map((option) => `<option value="${esc(option.key)}" ${option.key === state.materialDashboardSheetFilter ? 'selected' : ''}>${esc(option.source_sheet)} · ${esc(option.source_file)}</option>`).join('')}</select></label><span class="source-chip">Nguồn: ${esc(rows[0]?.source_file || `${state.currentProject}PL.xlsx`)}</span></div>
+  const chartRange = { from:state.materialDashboardStartDate, to:state.materialDashboardEndDate, metric:state.materialDashboardMetric };
+  return `${heading('MATERIAL DASHBOARD · BOM & VẬT TƯ','Dashboard BOM & vật tư','Chọn sheet, khoảng ngày và đơn vị đo; rê chuột lên biểu đồ để xem số liệu chi tiết.',projectSelect())}
+    <div class="audit-dashboard-filter"><label class="filter-label">Sheet dashboard<select id="materialDashboardSheetFilter"><option value="">Tất cả sheet (${options.length})</option>${options.map((option) => `<option value="${esc(option.key)}" ${option.key === state.materialDashboardSheetFilter ? 'selected' : ''}>${esc(option.source_sheet)} · ${esc(option.source_file)}</option>`).join('')}</select></label><label class="filter-label">Từ ngày<input type="date" id="materialDashboardStartDate" value="${esc(state.materialDashboardStartDate)}"></label><label class="filter-label">Đến ngày<input type="date" id="materialDashboardEndDate" value="${esc(state.materialDashboardEndDate)}"></label><label class="filter-label">Đơn vị biểu đồ<select id="materialDashboardMetric"><option value="quantity" ${state.materialDashboardMetric === 'quantity' ? 'selected' : ''}>Số lượng BTP</option><option value="kg" ${state.materialDashboardMetric === 'kg' ? 'selected' : ''}>Khối lượng · kg</option><option value="ton" ${state.materialDashboardMetric === 'ton' ? 'selected' : ''}>Khối lượng · tấn</option></select></label><span class="source-chip">Nguồn: ${esc(rows[0]?.source_file || `${state.currentProject}PL.xlsx`)}</span></div>
     <div class="stats-grid compact audit-dashboard-stats">${statCard('Dòng BTP',selectedRows.length,selectedLabel)}${statCard('Đã nhận',selectedRows.reduce((sum, row) => sum + (btpReceivedQuantity(row) || 0), 0),'Cộng từ các sheet đang xem','green')}${statCard('Còn thiếu',selectedRows.reduce((sum, row) => sum + (getBtpShortageQuantity(row) || 0), 0),'Theo cột Còn thiếu','red')}${statCard('Đơn vị giao',new Set(selectedRows.map((row) => row.unit).filter(Boolean)).size,'Theo DVG trong file BTP')}</div>
-    ${renderMaterialDashboard(selectedRows, selectedLabel)}`;
+    ${renderMaterialDashboard(selectedRows, selectedLabel, chartRange)}`;
 }
 function projectsPage() {
   const rows = state.data?.rows || [];
@@ -402,6 +438,9 @@ function bindPage() {
     state.materialSearch = '';
     state.materialPageIndex = 0;
     state.materialDashboardSheetFilter = '';
+    state.materialDashboardStartDate = '';
+    state.materialDashboardEndDate = '';
+    state.materialDashboardMetric = 'quantity';
     await loadPageData(); renderPage();
   });
   const rerenderAudit = ({ keepDropdown = false, focusSearch = false, cursor = null } = {}) => {
@@ -469,11 +508,26 @@ function bindPage() {
     state.materialPageIndex += 1;
     rerenderAudit();
   });
-  document.querySelector('#materialDashboardSheetFilter')?.addEventListener('change', (event) => {
-    state.materialDashboardSheetFilter = event.currentTarget.value;
+  const rerenderMaterialDashboard = () => {
     const page = document.querySelector('#page');
     const position = window.scrollY;
     page.innerHTML = materialDashboardPage(); bindPage(); window.scrollTo(0,position);
+  };
+  document.querySelector('#materialDashboardSheetFilter')?.addEventListener('change', (event) => {
+    state.materialDashboardSheetFilter = event.currentTarget.value;
+    rerenderMaterialDashboard();
+  });
+  document.querySelector('#materialDashboardStartDate')?.addEventListener('change', (event) => {
+    state.materialDashboardStartDate = event.currentTarget.value;
+    rerenderMaterialDashboard();
+  });
+  document.querySelector('#materialDashboardEndDate')?.addEventListener('change', (event) => {
+    state.materialDashboardEndDate = event.currentTarget.value;
+    rerenderMaterialDashboard();
+  });
+  document.querySelector('#materialDashboardMetric')?.addEventListener('change', (event) => {
+    state.materialDashboardMetric = event.currentTarget.value;
+    rerenderMaterialDashboard();
   });
   document.querySelector('#exportBtpShortage')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -514,6 +568,9 @@ function bindPage() {
       state.materialStatusFilter = '';
       state.materialSearch = '';
       state.materialDashboardSheetFilter = '';
+      state.materialDashboardStartDate = '';
+      state.materialDashboardEndDate = '';
+      state.materialDashboardMetric = 'quantity';
     }
     state.currentProject = link.dataset.project;
   }));
