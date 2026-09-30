@@ -7,6 +7,7 @@ import { __test__ } from '../worker/index.js';
 import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js';
 import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch, summarizeBtpShortages } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
+import { renderMaterialDashboard } from '../public/material-dashboard.js';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(__test__.safeProjectCode(' a290 '), 'A290');
@@ -136,7 +137,7 @@ test('material shortage report quantity prefers remaining and falls back to requ
   assert.equal(getMaterialShortageQuantity({ quantity:10 }), null);
 });
 
-test('BTP has a separate one-table workspace with filters and export above the table', async () => {
+test('BTP separates date lookup from its one-table workspace and keeps filters and export above the table', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync('public/app.js', 'utf8');
   const styles = readFileSync('public/styles.css', 'utf8');
@@ -151,7 +152,10 @@ test('BTP has a separate one-table workspace with filters and export above the t
   assert.match(styles, /\.shell\.sidebar-collapsed \.main-area\{margin-left:0\}/);
   assert.match(styles, /@media\(min-width:821px\)\{\.shell\.sidebar-collapsed \.nav-group\.expanded \.nav-children\{display:none\}\}/);
   assert.match(app, /href="#btp">Bán thành phẩm/);
-  assert.match(btpPage, /id="btpSheetFilter"[\s\S]*id="btpReceiptDateFilter"[\s\S]*id="btpStatusFilter"[\s\S]*id="btpSearch"[\s\S]*id="exportBtpShortage"/);
+  assert.match(app, /href="#btp-dates">Theo ngày/);
+  assert.match(app, /state\.page === 'btp-dates' \? btpPage\(\)/);
+  assert.match(btpPage, /const dateView = state\.page === 'btp-dates'/);
+  assert.match(btpPage, /id="btpSheetFilter"[\s\S]*dateView \? '<label class="filter-label material-sheet-select">Ngày nhận<select id="btpReceiptDateFilter"[\s\S]*id="btpStatusFilter"[\s\S]*id="btpSearch"[\s\S]*id="exportBtpShortage"/);
   assert.ok(btpPage.indexOf('id="exportBtpShortage"') < btpPage.indexOf('<table'));
   assert.match(btpPage, /Cấu kiện BOM[\s\S]*Mã BOM[\s\S]*Mã BTP \(chi tiết\)[\s\S]*Tiến độ theo ngày/);
   assert.match(btpPage, /state\.btpData\?\.rows/);
@@ -160,6 +164,20 @@ test('BTP has a separate one-table workspace with filters and export above the t
   assert.match(app, /state\.page === 'btp' \? btpPage\(\)/);
   assert.match(app, /localeCompare\(String\(right\.code\), 'vi', \{ numeric:true, sensitivity:'base' \}\)/);
   assert.match(app, /\[\.\.\.state\.projects\]\.sort\(\(left, right\) => String\(left\.code\)\.localeCompare\(String\(right\.code\)/);
+});
+
+test('material dashboard charts cumulative receipt totals and received/shortage by delivery unit', () => {
+  const html = renderMaterialDashboard([
+    { unit:'DVG-A', design_quantity:3, received:1, remaining:2, daily_progress:'01/09/2026: 1; 02/09/2026: 1' },
+    { unit:'DVG-A', design_quantity:2, received:2, remaining:0, daily_progress:'02/09/2026: 2' },
+  ], 'PROJECT · Sheet A');
+  assert.match(html, /Dashboard BOM &amp; vật tư/);
+  assert.match(html, /Lũy kế nhận theo ngày/);
+  assert.match(html, /Phân theo đơn vị giao/);
+  assert.match(html, /01\/09\/2026 · lũy kế 1/);
+  assert.match(html, /02\/09\/2026 · lũy kế 4/);
+  assert.match(html, /DVG-A · đã nhận 3/);
+  assert.match(html, /DVG-A · còn thiếu 2/);
 });
 
 test('A290 6HH-43 uses the date on its receipt record as the displayed receipt date', async () => {

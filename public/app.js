@@ -4,8 +4,9 @@ import { projectCodeFromFilename, readMaterialWorkbook } from './material-import
 import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch } from './material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from './material-display.js';
 import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate, listBtpReceiptDates } from './shortage-export.js';
+import { renderMaterialDashboard } from './material-dashboard.js';
 const app = document.querySelector('#app');
-const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSheetFilter: '', materialStatusFilter: '', btpSheetFilter: '', btpReceiptDateFilter: '', btpStatusFilter: '', btpSearch: '', btpPageIndex: 0, page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSheetFilter: '', materialStatusFilter: '', materialCardsExpanded: null, btpSheetFilter: '', btpReceiptDateFilter: '', btpStatusFilter: '', btpSearch: '', btpPageIndex: 0, page: 'overview', theme: localStorage.getItem('amecc-theme') || 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, loading: false };
 const themes = ['light', 'midnight', 'paper'];
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
@@ -42,7 +43,7 @@ async function api(path, options = {}) {
   if (!response.ok) throw new Error(data.error || 'Không thể hoàn thành yêu cầu.');
   return data;
 }
-function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', btp:'Bán thành phẩm', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
+function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', btp:'Bán thành phẩm', 'btp-dates':'Theo ngày', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
 function shell() {
   const isAdmin = state.user?.role === 'admin';
   const navigation = ADMIN_MODE
@@ -50,9 +51,9 @@ function shell() {
     : `<div class="nav-label">KHÔNG GIAN LÀM VIỆC</div>
       <nav class="nav-list" aria-label="Điều hướng chính">
         <a class="nav-link ${state.page === 'overview' ? 'active' : ''}" href="#overview">${icon('overview')}<span>Tổng quan</span></a>
-        <div class="nav-group ${['materials','btp'].includes(state.page) ? 'expanded' : ''}">
-          <button class="nav-parent" type="button" data-group="materials" aria-expanded="${['materials','btp'].includes(state.page)}">${icon('materials')}<span>Quản lý vật tư</span><span class="nav-chevron">${icon('chevron')}</span></button>
-          <div class="nav-children"><a class="nav-child ${state.page === 'materials' ? 'active' : ''}" href="#materials">BOM &amp; Vật tư PL</a><a class="nav-child ${state.page === 'btp' ? 'active' : ''}" href="#btp">Bán thành phẩm</a></div>
+        <div class="nav-group ${['materials','btp','btp-dates'].includes(state.page) ? 'expanded' : ''}">
+          <button class="nav-parent" type="button" data-group="materials" aria-expanded="${['materials','btp','btp-dates'].includes(state.page)}">${icon('materials')}<span>Quản lý vật tư</span><span class="nav-chevron">${icon('chevron')}</span></button>
+          <div class="nav-children"><a class="nav-child ${state.page === 'materials' ? 'active' : ''}" href="#materials">BOM &amp; Vật tư PL</a><a class="nav-child ${state.page === 'btp' ? 'active' : ''}" href="#btp">Bán thành phẩm</a><a class="nav-child ${state.page === 'btp-dates' ? 'active' : ''}" href="#btp-dates">Theo ngày</a></div>
         </div>
         <div class="nav-group ${state.page === 'projects' ? 'expanded' : ''}">
           <button class="nav-parent" type="button" data-group="projects" aria-expanded="${state.page === 'projects'}">${icon('projects')}<span>Quản lý dự án</span><span class="nav-chevron">${icon('chevron')}</span></button>
@@ -149,6 +150,10 @@ function overviewPage() {
 }
 function materialsPage() {
   const allRows = state.data?.rows || [];
+  const selectedSheet = state.materialSheetFilter ? JSON.parse(state.materialSheetFilter) : null;
+  const dashboardRows = (state.btpData?.rows || []).filter((row) => !selectedSheet
+    || (btpKey(row.source_file) === btpKey(selectedSheet[0]) && btpSheetBase(row.source_sheet) === btpSheetBase(selectedSheet[1])));
+  const dashboardScope = selectedSheet ? `${selectedSheet[0]} · ${selectedSheet[1]}` : 'Toàn bộ sheet của dự án';
   const sheetOptions = [...new Map(allRows
     .filter((row) => row.source_file && row.source_sheet)
     .map((row) => [JSON.stringify([row.source_file, row.source_sheet]), { source_file:row.source_file, source_sheet:row.source_sheet }])).values()]
@@ -198,7 +203,8 @@ function materialsPage() {
     const children = incompleteOnly
       ? (parentMatchesSearch ? statusMatchedChildren : matchingChildren)
       : (search && matchingChildren.length ? matchingChildren : group.children);
-    const openByDefault = hasChildFilters ? matchingChildren.length > 0 || (incompleteOnly && parentMatchesSearch) : (!search && index === 0);
+    const defaultOpen = hasChildFilters ? matchingChildren.length > 0 || (incompleteOnly && parentMatchesSearch) : (!search && index === 0);
+    const openByDefault = state.materialCardsExpanded === 'all' ? true : state.materialCardsExpanded === 'none' ? false : defaultOpen;
     const receiptDate = formatMaterialDate(getMaterialReceiptDate(group));
     return `<details class="assembly-card" ${openByDefault ? 'open' : ''}><summary><span class="progress-ring" style="--value:${percent || 0}%"><b>${percent === null ? '—' : `${percent}%`}</b></span><span class="assembly-title"><strong>${highlightMatch(group.assembly || group.drawing || group.description,search)}</strong><small>${highlightMatch(group.description,search)} · ${highlightMatch(group.drawing,search)}</small><small class="assembly-dates">Ngày nhận: ${fmt(receiptDate)}</small></span><span class="assembly-qty"><b>${fmt(group.hasReceived ? group.receivedTotal : null)} / ${fmt(group.hasQuantity ? group.total : null)}</b><small>Đã nhận / tổng SL</small></span><span class="disclosure">⌄</span></summary><div class="assembly-body">${tableMarkup(children,materialColumns,{limit:150,search})}</div></details>`;
   }).join('');
@@ -212,12 +218,13 @@ function materialsPage() {
     return `<option value="${esc(key)}" ${state.materialSheetFilter === key ? 'selected' : ''}>${esc(option.source_sheet)}</option>`;
   }).join('')}</optgroup>`).join('');
   return `${heading('MATERIAL CONTROL · PL','BOM & Vật tư PL','Theo dõi BOM, tình trạng nhận vật tư và danh sách cần bổ sung theo dự án.',projectSelect())}
+    ${renderMaterialDashboard(dashboardRows, dashboardScope)}
     <div class="material-filter-stack"><label class="filter-label material-sheet-select">Sheet hạng mục<select id="materialSheetFilter" aria-label="Lọc vật tư theo sheet hạng mục"><option value="" ${state.materialSheetFilter ? '' : 'selected'}>Toàn bộ file (${sheetOptions.length} sheet)</option>${sheetSelectOptions}</select></label>
     <label class="filter-label material-sheet-select material-status-select">Trạng thái vật tư<select id="materialStatusFilter" aria-label="Lọc vật tư chưa đủ"><option value="" ${incompleteOnly ? '' : 'selected'}>Tất cả trạng thái</option><option value="incomplete" ${incompleteOnly ? 'selected' : ''}>Chưa đủ (bao gồm chưa nhận)</option></select></label>
     <div class="filter-toolbar"><label class="search-box">${icon('search')}<input id="materialSearch" placeholder="Tìm cấu kiện, mã bản vẽ, mô tả, mã chi tiết…" value="${esc(search)}"></label><span class="source-chip">Nguồn: ${files.map(esc).join(', ') || '—'}</span></div></div>
     <div class="stats-grid compact">${statCard('Dòng vật tư',rows.length,'Theo dự án đang chọn')}${statCard('Cấu kiện chính',components.length,'Nhóm AS Symbol / Symbol')}${statCard('Tổng đã nhận',received,'Cộng từ dữ liệu nhận PL','green')}${statCard('Workbook nguồn',files.length,'Không công khai file gốc')}</div>
-    <div class="section-heading"><div><span class="eyebrow">ASSEMBLY BOM</span><h3>Kết quả tìm kiếm <span class="muted-count">${matching.length}</span></h3></div></div>
-    ${matching.length ? `<div class="assembly-list">${renderGroups(matching,true)}</div>${other.length ? `<details class="other-results"><summary>Xem ${other.length.toLocaleString('vi-VN')} cấu kiện khác${search ? ' không khớp từ khóa' : ''}</summary><div class="assembly-list">${renderGroups(other)}</div></details>` : ''}` : '<div class="empty-state"><strong>Không tìm thấy cấu kiện phù hợp</strong><p>Thử mã bản vẽ, cụm lắp ráp, mô tả hoặc mã chi tiết. Các cấu kiện khác có thể mở bên dưới nếu có.</p></div>' + (other.length ? `<details class="other-results"><summary>Xem ${other.length.toLocaleString('vi-VN')} cấu kiện khác</summary><div class="assembly-list">${renderGroups(other)}</div></details>` : '')}
+    <div class="section-heading material-results-heading"><div><span class="eyebrow">ASSEMBLY BOM</span><h3>Kết quả tìm kiếm <span class="muted-count">${matching.length}</span></h3></div><div class="material-card-actions"><button class="button" id="closeMaterialCards" type="button">Đóng tất cả</button><button class="button primary" id="openMaterialCards" type="button">Mở tất cả</button></div></div>
+    ${matching.length ? `<div class="assembly-list">${renderGroups(matching,true)}</div>${other.length ? `<details class="other-results" ${state.materialCardsExpanded === 'all' ? 'open' : ''}><summary>Xem ${other.length.toLocaleString('vi-VN')} cấu kiện khác${search ? ' không khớp từ khóa' : ''}</summary><div class="assembly-list">${renderGroups(other)}</div></details>` : ''}` : '<div class="empty-state"><strong>Không tìm thấy cấu kiện phù hợp</strong><p>Thử mã bản vẽ, cụm lắp ráp, mô tả hoặc mã chi tiết. Các cấu kiện khác có thể mở bên dưới nếu có.</p></div>' + (other.length ? `<details class="other-results" ${state.materialCardsExpanded === 'all' ? 'open' : ''}><summary>Xem ${other.length.toLocaleString('vi-VN')} cấu kiện khác</summary><div class="assembly-list">${renderGroups(other)}</div></details>` : '')}
     <section class="shortage-report"><div class="section-heading"><div><span class="eyebrow">MATERIAL ACTION REPORT</span><h3>Báo cáo vật tư còn thiếu <span class="muted-count">${reportRows.length}</span></h3><p class="muted">Danh sách dòng vật tư chưa đủ theo dự án, sheet và từ khóa đang chọn.</p></div></div>
       <div class="stats-grid compact">${statCard('Dòng vật tư còn thiếu',reportRows.length,'Cần theo dõi / bổ sung','red')}${statCard('Tổng số lượng cần bổ sung',shortageTotal,'Theo cột còn thiếu hoặc số lượng yêu cầu − đã nhận','red')}${statCard('Cụm bị ảnh hưởng',affectedAssemblies,'Có ít nhất một dòng thiếu','gold')}${statCard('Sheet có thiếu',affectedSheets,'Trong phạm vi lọc hiện tại')}</div>
       <div class="shortage-report-note">Số lượng thiếu lấy từ cột “Còn thiếu”; nếu workbook không có số này, báo cáo tính bằng “Số lượng yêu cầu − Đã nhận”.</div>
@@ -246,6 +253,7 @@ function btpBomContext(row, materialRows) {
   return { parent, bomLine, assemblyCode:parent.assembly };
 }
 function btpPage() {
+  const dateView = state.page === 'btp-dates';
   const btpRows = state.btpData?.rows || [];
   const materialRows = state.data?.rows || [];
   const sheetOptions = [...new Map(btpRows.filter((row) => row.source_file && row.source_sheet)
@@ -256,7 +264,8 @@ function btpPage() {
   const receiptDates = listBtpReceiptDates(sheetRows);
   const search = String(state.btpSearch || document.querySelector('#btpSearch')?.value || '').trim();
   const statusFilter = state.btpStatusFilter || '';
-  let filteredRows = filterBtpRowsByReceiptDate(filterBtpRows(btpRows, state.btpSheetFilter, search), state.btpReceiptDateFilter);
+  let filteredRows = filterBtpRows(btpRows, state.btpSheetFilter, search);
+  if (dateView) filteredRows = filterBtpRowsByReceiptDate(filteredRows, state.btpReceiptDateFilter);
   if (statusFilter === 'incomplete') filteredRows = filteredRows.filter((row) => {
     const remaining = getBtpShortageQuantity(row);
     return remaining === null || remaining > 0;
@@ -313,9 +322,9 @@ function btpPage() {
   }).join('');
   const sheetCount = new Set(btpRows.map((row) => row.source_file + '|' + row.source_sheet)).size;
   const sheetLabel = state.btpSheetFilter ? '1 sheet được chọn' : sheetCount + ' sheet';
-  return heading('BTP DELIVERY · RECEIPT CONTROL','Bán thành phẩm','Theo dõi ngày nhận, số lượng còn thiếu và thông tin BOM để đối chiếu.',projectSelect()) +
+  return heading(dateView ? 'BTP RECEIPT · DAILY VIEW' : 'BTP DELIVERY · RECEIPT CONTROL', dateView ? 'Theo ngày' : 'Bán thành phẩm', dateView ? 'Tra cứu các đợt nhận BTP theo ngày, sheet và trạng thái.' : 'Theo dõi số lượng còn thiếu và thông tin BOM để đối chiếu.',projectSelect()) +
     '<div class="btp-control-bar"><label class="filter-label material-sheet-select">Sheet BTP<select id="btpSheetFilter" aria-label="Lọc theo sheet BTP"><option value="">Tất cả sheet (' + sheetCount + ')</option>' + sheetSelect + '</select></label>' +
-    '<label class="filter-label material-sheet-select">Ngày nhận<select id="btpReceiptDateFilter" aria-label="Lọc theo ngày nhận"><option value="">Tất cả ngày nhận</option>' + dateSelect + '</select></label>' +
+    (dateView ? '<label class="filter-label material-sheet-select">Ngày nhận<select id="btpReceiptDateFilter" aria-label="Lọc theo ngày nhận"><option value="">Tất cả ngày nhận</option>' + dateSelect + '</select></label>' : '') +
     '<label class="filter-label material-sheet-select">Trạng thái<select id="btpStatusFilter" aria-label="Lọc theo trạng thái"><option value=""' + (statusFilter ? '' : ' selected') + '>Tất cả</option><option value="incomplete"' + (statusFilter === 'incomplete' ? ' selected' : '') + '>Còn thiếu</option><option value="received"' + (statusFilter === 'received' ? ' selected' : '') + '>Đã nhận</option></select></label>' +
     '<label class="search-box">' + icon('search') + '<input id="btpSearch" placeholder="Tìm mã BTP, cấu kiện, vật liệu…" value="' + esc(search) + '"></label>' +
     '<button class="button primary btp-export-button" id="exportBtpShortage" type="button" ' + (shortageRows.length ? '' : 'disabled') + '>' + icon('download') + '<span>Xuất List thiếu</span></button><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>' +
@@ -435,6 +444,16 @@ function bindPage() {
     page.innerHTML = materialsPage(); bindPage();
     window.scrollTo(0,position);
   });
+  document.querySelector('#openMaterialCards')?.addEventListener('click', () => {
+    state.materialCardsExpanded = 'all';
+    document.querySelectorAll('.other-results').forEach((card) => { card.open = true; });
+    document.querySelectorAll('.assembly-card').forEach((card) => { card.open = true; });
+  });
+  document.querySelector('#closeMaterialCards')?.addEventListener('click', () => {
+    state.materialCardsExpanded = 'none';
+    document.querySelectorAll('.assembly-card').forEach((card) => { card.open = false; });
+    document.querySelectorAll('.other-results').forEach((card) => { card.open = false; });
+  });
   document.querySelector('#btpStatusFilter')?.addEventListener('change', (event) => {
     const page = document.querySelector('#page'); const position = window.scrollY;
     state.btpStatusFilter = event.currentTarget.value;
@@ -487,7 +506,8 @@ function bindPage() {
       const xlsx = window.XLSX;
       const rows = state.btpData?.rows || [];
       const search = state.btpSearch || document.querySelector('#btpSearch')?.value.trim() || '';
-      let selectedRows = filterBtpRowsByReceiptDate(filterBtpRows(rows, state.btpSheetFilter, search), state.btpReceiptDateFilter);
+      let selectedRows = filterBtpRows(rows, state.btpSheetFilter, search);
+      if (state.page === 'btp-dates') selectedRows = filterBtpRowsByReceiptDate(selectedRows, state.btpReceiptDateFilter);
       if (state.btpStatusFilter === 'incomplete') selectedRows = selectedRows.filter((row) => {
         const remaining = getBtpShortageQuantity(row);
         return remaining === null || remaining > 0;
@@ -642,8 +662,8 @@ async function refreshPlFiles() {
 async function loadPageData() {
   state.data = null;
   state.btpData = null;
-  if (!state.currentProject || !['materials','btp','projects'].includes(state.page)) return;
-  if (['materials','btp'].includes(state.page)) {
+  if (!state.currentProject || !['materials','btp','btp-dates','projects'].includes(state.page)) return;
+  if (['materials','btp','btp-dates'].includes(state.page)) {
     [state.data, state.btpData] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(state.currentProject)}/materials`),
       api(`/api/projects/${encodeURIComponent(state.currentProject)}/btp`),
@@ -657,10 +677,10 @@ async function renderPage() {
   page.innerHTML = '<div class="loading-state"><span class="spinner"></span><p>Đang tải dữ liệu…</p></div>';
   try {
     if (state.page === 'overview') page.innerHTML = overviewPage();
-    else if (['materials','btp','projects'].includes(state.page)) {
+    else if (['materials','btp','btp-dates','projects'].includes(state.page)) {
       if (!state.currentProject && state.projects.length) state.currentProject = state.projects[0].code;
       await loadPageData();
-      page.innerHTML = state.page === 'materials' ? materialsPage() : state.page === 'btp' ? btpPage() : projectsPage();
+      page.innerHTML = state.page === 'materials' ? materialsPage() : state.page === 'btp' ? btpPage() : state.page === 'btp-dates' ? btpPage() : projectsPage();
     } else {
       await refreshPlFiles();
       page.innerHTML = adminPage();
@@ -676,7 +696,7 @@ async function navigate() {
     return;
   }
   const key = location.hash.replace(/^#\/?/, '') || 'overview';
-  state.page = ['overview','materials','btp','projects'].includes(key) ? key : 'overview';
+  state.page = ['overview','materials','btp','btp-dates','projects'].includes(key) ? key : 'overview';
   shell(); await renderPage();
 }
 async function logout() {
