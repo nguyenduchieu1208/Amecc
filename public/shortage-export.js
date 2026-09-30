@@ -3,13 +3,11 @@ import { getBtpShortageQuantity, getBtpShortageWeight } from './material-search.
 import { fillTemplateWorkbook } from './template-xlsx.js';
 
 const FORM_SHEET = 'Bieu mau check tinh trang BTP';
-const FIRST_DATA_ROW = 13;
+const FIRST_DATA_ROW = 14;
 const BTP_TEMPLATE_COLUMNS = Object.freeze({
-  description:'E',
   part_no:'F',
   size:'H',
   length_mm:'I',
-  material:'J',
   design_quantity:'M',
   unit_weight:'N',
   total_weight:'O',
@@ -22,8 +20,16 @@ const BTP_TEMPLATE_COLUMNS = Object.freeze({
   received_weight:'AE',
   remaining_quantity:'AF',
   remaining_weight:'AG',
-  status:'AP',
 });
+
+function btpRemark(row, received, remaining) {
+  const status = row.status || (remaining === 0 ? 'Đã đủ' : received > 0 ? 'Đang nhận' : 'Còn thiếu');
+  return [
+    row.joint_check ? `Ktra nối: ${row.joint_check}` : '',
+    status ? `Trạng thái: ${status}` : '',
+    row.note ? `Ghi chú: ${row.note}` : '',
+  ].filter(Boolean).join('\n');
+}
 
 function receiptEvents(value) {
   return String(value ?? '').split(/\s*;\s*/).flatMap((entry) => {
@@ -111,15 +117,13 @@ export function buildBtpShortageTemplate({ templateBytes, rows, projectCode, sel
     const remaining = row.remaining;
     const values = {
       A:index + 1,
-      [BTP_TEMPLATE_COLUMNS.description]:row.description,
       [BTP_TEMPLATE_COLUMNS.part_no]:row.part_no,
       [BTP_TEMPLATE_COLUMNS.size]:row.size,
       [BTP_TEMPLATE_COLUMNS.length_mm]:row.length_mm,
-      [BTP_TEMPLATE_COLUMNS.material]:row.material,
       [BTP_TEMPLATE_COLUMNS.design_quantity]:designQuantity,
       [BTP_TEMPLATE_COLUMNS.unit_weight]:unitWeight,
-      [BTP_TEMPLATE_COLUMNS.total_weight]:typeof row.total_weight === 'number' ? row.total_weight : (designQuantity !== null && unitWeight !== null ? designQuantity * unitWeight : null),
-      [BTP_TEMPLATE_COLUMNS.note]:row.note,
+      [BTP_TEMPLATE_COLUMNS.total_weight]:typeof row.total_weight === 'number' ? row.total_weight : null,
+      [BTP_TEMPLATE_COLUMNS.note]:btpRemark(row, received, remaining),
       [BTP_TEMPLATE_COLUMNS.daily_progress]:receiptEvents(row.daily_progress).map((event) => `${event.date}: ${event.quantity}`).join('\n'),
       [BTP_TEMPLATE_COLUMNS.remaining]:remaining,
       [BTP_TEMPLATE_COLUMNS.material_type]:row.material_type,
@@ -128,7 +132,6 @@ export function buildBtpShortageTemplate({ templateBytes, rows, projectCode, sel
       [BTP_TEMPLATE_COLUMNS.received_weight]:received !== null && unitWeight !== null ? received * unitWeight : null,
       [BTP_TEMPLATE_COLUMNS.remaining_quantity]:remaining,
       [BTP_TEMPLATE_COLUMNS.remaining_weight]:row.shortage_weight,
-      [BTP_TEMPLATE_COLUMNS.status]:row.status || (remaining === 0 ? 'Đã đủ' : received > 0 ? 'Đang nhận' : 'Còn thiếu'),
     };
     for (const [column, value] of Object.entries(values)) {
       if (value === null || value === undefined || value === '') continue;

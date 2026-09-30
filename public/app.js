@@ -169,37 +169,22 @@ function auditStatus(row) {
   return 'Chưa rõ';
 }
 function auditStatusClass(status) {
-  return status === 'Đã đủ' ? 'success' : status === 'Chưa có BTP' || status === 'Còn thiếu' ? 'danger' : 'warning';
-}
-function auditLinkPill(status, type) {
-  const matched = status === 'matched';
-  const missing = status === 'missing' || status === 'no-btp';
-  const label = type === 'bom'
-    ? ({ matched:'Khớp BOM', 'parent-only':'Chỉ khớp cụm', ambiguous:'BOM mơ hồ', missing:'Không khớp BOM', 'no-btp':'Không có BTP' })[status] || 'Chưa rõ'
-    : ({ matched:'Khớp QLDA', ambiguous:'QLDA mơ hồ', missing:'Không khớp QLDA' })[status] || 'Chưa rõ';
-  return `<span class="status-pill ${matched ? 'success' : missing ? 'danger' : 'warning'}">${label}</span>`;
+  const value = String(status || '').trim().toLocaleLowerCase();
+  if (value === 'đã đủ' || value === 'đủ') return 'success';
+  if (value.includes('chưa') || value.includes('thiếu')) return 'danger';
+  return 'warning';
 }
 function auditReceiptEvents(row) {
   const entries = String(row?.btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean);
   return entries.length ? `<span class="audit-receipt-list">${entries.map((event) => `<span>${fmt(event.replace(/:\s*/, ' · '))}</span>`).join('')}</span>` : '<span class="muted">Chưa có ngày nhận</span>';
 }
-function auditProgressCell(row) {
-  if (!row.progress?.length) return auditLinkPill(row.qldaStatus, 'qlda');
-  const descriptions = row.progress.map((item) => `${item.source_file || 'QLDA'} · ${item.source_sheet || 'Progress'} · dòng ${item.source_row || '—'} · ${item.part_no || '—'} · SL ${item.quantity ?? '—'} · U.Weight ${item.unit_weight ?? '—'} · T.Weight ${item.total_weight ?? '—'} · bàn giao ${item.handover_qty ?? '—'} ${item.handover_date || ''} · nhận ${item.receiver || '—'}`);
-  return `<span class="audit-qlda-detail" title="${esc(descriptions.join('\n'))}">${auditLinkPill(row.qldaStatus, 'qlda')}<small>${fmt(row.progress[0].receiver || row.progress[0].handover_date || row.progress[0].part_no)}${row.progress.length > 1 ? ` · +${row.progress.length - 1}` : ''}</small></span>`;
-}
 function auditRowMarkup(row) {
   const btp = row.btp || {};
-  const bom = row.bomLine || {};
   const remaining = row.btp ? getBtpShortageQuantity(row.btp) : null;
-  const status = auditStatus(row);
-  const source = [row.bom_source_file || row.btp_source_file, row.bom_source_sheet || row.btp_source_sheet].filter(Boolean).join(' · ');
-  return `<tr><td class="audit-frozen-assembly"><strong>${fmt(row.bomParent?.assembly || btp.part_no || bom.part_no)}</strong><small>${fmt(row.bomParent?.drawing || '')}</small></td>
-    <td class="audit-code">${fmt(bom.part_no)}</td><td class="audit-description">${fmt(bom.description)}</td><td>${fmt(bom.size)}</td><td class="numeric-cell">${fmt(bom.quantity)}</td>
-    <td class="audit-code">${fmt(btp.part_no)}</td><td>${fmt(btp.material_type)}</td><td>${fmt(btp.material)}</td><td>${fmt(btp.unit)}</td><td>${fmt(btp.size)}</td>
+  const status = btp.status || auditStatus(row);
+  return `<tr><td class="audit-frozen-btp audit-code">${fmt(btp.part_no)}</td><td>${fmt(btp.material_type)}</td><td>${fmt(btp.unit)}</td><td>${fmt(btp.size)}</td>
     <td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td>
-    <td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${auditLinkPill(row.bomStatus, 'bom')}</td><td>${auditProgressCell(row)}</td>
-    <td class="audit-source" title="${esc(source)}">${fmt(row.bom_source_sheet || row.btp_source_sheet)}</td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
+    <td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${fmt(btp.joint_check)}</td><td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
 }
 function materialAuditRows() {
   return buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:state.btpData?.rows || [], progressRows:state.progressData?.rows || [] });
@@ -256,17 +241,17 @@ function materialsAuditPage() {
   return `${heading('MATERIAL CONTROL · BOM / BTP / QLDA','BOM & Vật tư PL','Đối chiếu BOM, BTP và tiến độ QLDA theo tên file dự án; tất cả ngày nhận được giữ lại để kiểm tra.',projectSelect())}
     <section class="material-audit-controls" aria-label="Lọc và xuất dữ liệu BOM, BTP">
       <div class="audit-filter-grid">
-        <label class="filter-label">Sheet BOM / BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
+        <label class="filter-label">Sheet BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
         <label class="filter-label">Ngày nhận<select id="materialReceiptDateFilter"><option value="">Tất cả ngày nhận</option>${dateOptions}</select></label>
         <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
-        <label class="search-box audit-search">${icon('search')}<input id="materialSearch" placeholder="Tìm cụm, bản vẽ, mã BOM/BTP, QLDA…" value="${esc(state.materialSearch)}"></label>
+        <label class="search-box audit-search">${icon('search')}<input id="materialSearch" placeholder="Tìm mã BTP, chủng loại, DVG, size, ghi chú…" value="${esc(state.materialSearch)}"></label>
         <button class="button primary audit-export-button" id="exportBtpShortage" type="button" ${shortageCount ? '' : 'disabled'}>${icon('download')}<span>Xuất List thiếu</span></button>
       </div>
       <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
     </section>
     <div class="stats-grid compact audit-stats">${statCard('Dòng đối chiếu',visibleRows.length,'Theo sheet, ngày, trạng thái và từ khóa')}${statCard('Dòng BTP còn thiếu',shortageCount,'Được đưa vào List thiếu','red')}${statCard('BOM chưa có BTP',visibleRows.filter((row) => row.kind === 'bom-only').length,'Kiểm tra phần chưa được lập BTP','gold')}${statCard('Liên kết cần xem',unmatchedCount,'BOM hoặc QLDA chưa khớp','blue')}</div>
-    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BOM · BTP · QLDA</span><h3>Bảng đối chiếu <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${pageIndex * pageSize + (visibleRows.length ? 1 : 0)}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ${visibleRows.length}</span></div>
-    <div class="table-frame material-audit-table-frame"><table class="data-table material-audit-table"><thead><tr><th>Cụm / bản vẽ</th><th>Mã BOM</th><th>Mô tả BOM</th><th>Size BOM</th><th>SL BOM</th><th>Mã BTP</th><th>Chủng loại</th><th>Vật liệu</th><th>DVG</th><th>Size BTP</th><th>Chiều dài</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Trạng thái</th><th>Tất cả ngày nhận</th><th>Nối BOM</th><th>Nối QLDA</th><th>Sheet nguồn</th><th>Ghi chú</th></tr></thead><tbody>${pageRows.map(auditRowMarkup).join('') || '<tr><td colspan="20" class="btp-empty-row">Không có dòng phù hợp. Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</td></tr>'}</tbody></table></div>
+    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>Bảng thông tin BTP <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${pageIndex * pageSize + (visibleRows.length ? 1 : 0)}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ${visibleRows.length}</span></div>
+    <div class="table-frame material-audit-table-frame"><table class="data-table material-audit-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${pageRows.map(auditRowMarkup).join('') || '<tr><td colspan="12" class="btp-empty-row">Không có dòng phù hợp. Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</td></tr>'}</tbody></table></div>
     <div class="btp-pagination"><span>${visibleRows.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, visibleRows.length)} / ` : ''}${fmt(visibleRows.length)} dòng</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
     ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;
 }

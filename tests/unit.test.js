@@ -141,7 +141,7 @@ test('material shortage report quantity prefers remaining and falls back to requ
   assert.equal(getMaterialShortageQuantity({ quantity:10 }), null);
 });
 
-test('BOM, BTP and QLDA share one audit table, with Dashboard as a separate material sidebar tab', async () => {
+test('BTP view shows only the requested fields, with Dashboard as a separate material sidebar tab', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync('public/app.js', 'utf8');
   const styles = readFileSync('public/styles.css', 'utf8');
@@ -149,7 +149,7 @@ test('BOM, BTP and QLDA share one audit table, with Dashboard as a separate mate
   const auditEnd = app.indexOf('function materialDashboardPage()', auditStart);
   const auditPage = app.slice(auditStart, auditEnd);
   assert.ok(auditStart >= 0 && auditEnd > auditStart, 'BOM/BTP audit table must be the materials view');
-  assert.equal((auditPage.match(/<table\b/g) || []).length, 1, 'BOM/BTP should render one combined audit table');
+  assert.equal((auditPage.match(/<table\b/g) || []).length, 1, 'BTP should render one data table');
   assert.match(app, /class="sidebar-settings"[\s\S]*?id="themeSelect"/);
   assert.match(app, /id="sidebarCollapse"/);
   assert.match(styles, /@media\(max-width:820px\)\{\.shell\.sidebar-collapsed \.sidebar\{width:min\(290px,86vw\);min-width:min\(290px,86vw\)/);
@@ -160,7 +160,8 @@ test('BOM, BTP and QLDA share one audit table, with Dashboard as a separate mate
   assert.match(app, /<input type="checkbox" data-material-sheet/);
   assert.match(auditPage, /id="materialReceiptDateFilter"[\s\S]*id="materialStatusFilter"[\s\S]*id="materialSearch"[\s\S]*id="exportBtpShortage"/);
   assert.ok(auditPage.indexOf('id="exportBtpShortage"') < auditPage.indexOf('<table'));
-  assert.match(auditPage, /Mã BOM[\s\S]*Mã BTP[\s\S]*Tất cả ngày nhận[\s\S]*Nối QLDA/);
+  assert.match(auditPage, /Mã BTP \(Chi tiết\)[\s\S]*Chủng loại[\s\S]*DVG[\s\S]*Quy cách \(Size\)[\s\S]*Chiều dài \(mm\)[\s\S]*SL thiết kế[\s\S]*Đã nhận[\s\S]*Còn thiếu[\s\S]*Tiến độ theo ngày[\s\S]*Ktra nối[\s\S]*Trạng thái[\s\S]*Ghi chú/);
+  assert.doesNotMatch(auditPage, /<th>Mã BOM|<th>Nối QLDA|<th>Sheet nguồn/);
   assert.match(auditPage, /state\.progressData\?\.rows/);
   assert.match(styles, /\.material-audit-controls\{position:sticky;top:82px/);
   assert.match(styles, /\.material-audit-table tbody td:first-child\{position:sticky;left:0/);
@@ -373,7 +374,7 @@ test('shortage export fills the supplied template while retaining every original
     projectCode:'A290',
     now:new Date('2026-09-30T00:00:00Z'),
     selectedSheets:[{ source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1' }],
-    rows:[{ source_file:'A290PL.xlsx', source_sheet:'BTP-A290U6T1P1', source_row:31, part_no:'FRAME-01-PLATE-2', material_type:'PLATE', description:'Plate', material:'SM490', unit:'MCC', size:'PL10*200', length_mm:200, unit_weight:3, total_weight:6, design_quantity:2, received:1, remaining:1, daily_progress:'28/09/2026: 1; 30/09/2026: 1', status:'Còn thiếu', note:'Ghi chú riêng của dòng BTP', shortage_weight:3 }],
+    rows:[{ source_file:'A290PL.xlsx', source_sheet:'BTP-A290U6T1P1', source_row:31, part_no:'FRAME-01-PLATE-2', material_type:'PLATE', description:'Plate', material:'SM490', unit:'MCC', size:'PL10*200', length_mm:200, unit_weight:3, total_weight:6, design_quantity:2, received:1, remaining:1, daily_progress:'28/09/2026: 1; 30/09/2026: 1', joint_check:'Nối đạt', status:'Còn thiếu', note:'Ghi chú riêng của dòng BTP', shortage_weight:3 }],
     materialRows:[
       { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:10, is_main:1, assembly:'FRAME-01', drawing:'D-01' },
       { source_file:'A290PL.xlsx', source_sheet:'A290U6T1P1', source_row:11, is_main:0, parent:'FRAME-01', part_no:'PLATE-2', quantity:2, size:'PL10*200', description:'Plate', weight:6 },
@@ -385,31 +386,33 @@ test('shortage export fills the supplied template while retaining every original
   const sheet = workbook.Sheets['Bieu mau check tinh trang BTP'];
   assert.equal(report.rowCount, 1);
   assert.equal(sheet.C4.v, 'A290');
-  assert.equal(sheet.A13.v, 1);
-  assert.equal(sheet.E13.v, 'Plate');
-  assert.equal(sheet.F13.v, 'FRAME-01-PLATE-2');
-  assert.equal(sheet.H13.v, 'PL10*200');
-  assert.equal(sheet.I13.v, 200);
-  assert.equal(sheet.J13.v, 'SM490');
-  assert.equal(sheet.M13.v, 2);
-  assert.equal(sheet.N13.v, 3);
-  assert.equal(sheet.O13.v, 6);
-  assert.equal(sheet.P13.v, 'Ghi chú riêng của dòng BTP');
-  assert.equal(sheet.Z13.v, '28/09/2026: 1\n30/09/2026: 1');
-  assert.equal(sheet.AB13.v, 'PLATE');
-  assert.equal(sheet.AC13.v, 'MCC');
-  assert.equal(sheet.AD13.v, 1);
-  assert.equal(sheet.AE13.v, 3);
-  assert.equal(sheet.AF13.v, 1);
-  assert.equal(sheet.AG13.v, 3);
-  assert.equal(sheet.AP13.v, 'Còn thiếu');
-  assert.equal(sheet.B13?.v, undefined, 'leave the parent drawing column empty');
-  assert.equal(sheet.C13?.v, undefined, 'leave the parent assembly column empty');
-  assert.equal(sheet.K13?.v, undefined, 'leave BOM quantity empty');
+  assert.equal(sheet.A13?.v, undefined, 'keep the template spacer row empty');
+  assert.equal(sheet.A14.v, 1);
+  assert.equal(sheet.F14.v, 'FRAME-01-PLATE-2');
+  assert.equal(sheet.H14.v, 'PL10*200');
+  assert.equal(sheet.I14.v, 200);
+  assert.equal(sheet.M14.v, 2);
+  assert.equal(sheet.N14.v, 3);
+  assert.equal(sheet.O14.v, 6);
+  assert.equal(sheet.P14.v, 'Ktra nối: Nối đạt\nTrạng thái: Còn thiếu\nGhi chú: Ghi chú riêng của dòng BTP');
+  assert.equal(sheet.Z14.v, '28/09/2026: 1\n30/09/2026: 1');
+  assert.equal(sheet.AB14.v, 'PLATE');
+  assert.equal(sheet.AC14.v, 'MCC');
+  assert.equal(sheet.AD14.v, 1);
+  assert.equal(sheet.AE14.v, 3);
+  assert.equal(sheet.AF14.v, 1);
+  assert.equal(sheet.AG14.v, 3);
+  assert.equal(sheet.B14?.v, undefined, 'leave the parent drawing column empty');
+  assert.equal(sheet.C14?.v, undefined, 'leave the parent assembly column empty');
+  assert.equal(sheet.K14?.v, undefined, 'leave BOM quantity empty');
+  assert.equal(sheet.AH14?.v, undefined, 'leave the MCC section to its owner');
+  assert.equal(sheet.AP14?.v, undefined, 'leave MCC status to its owner');
+  assert.equal(sheet.AR14?.v, undefined, 'leave the WTC section to its owner');
+  assert.equal(sheet.BB14?.v, undefined, 'leave the PMC section to its owner');
   assert.equal(sheet.P12.v, 'Remark');
   assert.equal(sheet.AB12.v, 'Chủng loại vật tư');
   assert.equal(sheet.AP12.v, 'Tình trạng vật tư');
-  assert.doesNotMatch(sheet.P13.v, /BOM|QLDA|A290PL\.xlsx|FRAME-01/);
+  assert.doesNotMatch(sheet.P14.v, /BOM|QLDA|A290PL\.xlsx|FRAME-01/);
   const changedParts = Object.keys(template).filter((path) => Buffer.compare(Buffer.from(template[path]), Buffer.from(output[path])) !== 0);
   assert.deepEqual(changedParts, ['xl/worksheets/sheet2.xml'], 'only the target worksheet values should change');
   const styleBefore = new TextDecoder().decode(template['xl/worksheets/sheet2.xml']);
