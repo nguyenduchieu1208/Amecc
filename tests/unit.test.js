@@ -459,6 +459,16 @@ test('material audit links BTP child codes to BOM across separate source files a
   assert.equal(audit[0].qldaStatus, 'matched');
 });
 
+test('material audit omits BOM drawing-marking placeholders without hiding named parts', () => {
+  const materialRows = [
+    { source_file:'A290PL.xlsx', source_sheet:'A290ELE', source_row:10, is_main:0, part_no:'5A (Marking as Dwg.)' },
+    { source_file:'A290PL.xlsx', source_sheet:'A290ELE', source_row:11, is_main:0, part_no:'PLATE-01' },
+  ];
+  const audit = buildMaterialAuditRows({ materialRows });
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].bomLine.part_no, 'PLATE-01');
+});
+
 test('shortage export fills the supplied template while retaining every original workbook part and cell style', async () => {
   const { readFileSync } = await import('node:fs');
   const templateBytes = new Uint8Array(readFileSync('public/templates/List_thieu_mau.xlsx'));

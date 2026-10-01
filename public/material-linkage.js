@@ -18,6 +18,10 @@ export function hasBtpIdentity(row) {
   });
 }
 
+function isDrawingMarkingPlaceholder(value) {
+  return /\(\s*marking\s+as\s+dwg\.?\s*\)/i.test(String(value ?? ''));
+}
+
 export function materialSheetKey(sourceFile, sourceSheet) {
   return JSON.stringify([String(sourceFile ?? '').trim(), materialSheetName(sourceSheet)]);
 }
@@ -57,7 +61,7 @@ function indexBom(materialRows) {
       addIndex(mainsByScope, `${scopeKey(row)}|${key(row.assembly)}`, row);
       addIndex(mainsBySheet, `${key(materialSheetName(row.source_sheet))}|${key(row.assembly)}`, row);
       addIndex(mainsByAssembly, key(row.assembly), row);
-    } else if (row?.part_no) {
+    } else if (row?.part_no && !isDrawingMarkingPlaceholder(row.part_no)) {
       childRows.push(row);
       const childKey = `${key(row.parent)}|${key(row.part_no)}`;
       addIndex(childrenByScope, `${scopeKey(row)}|${childKey}`, row);
