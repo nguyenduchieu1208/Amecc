@@ -8,7 +8,7 @@ import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js
 import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch, summarizeBtpShortages } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 import { renderMaterialDashboard } from '../public/material-dashboard.js';
-import { buildMaterialAuditRows, isPurchasingMaterialSheet, linkBtpToBom, findProgressForAssembly } from '../public/material-linkage.js';
+import { buildMaterialAuditRows, hasBtpIdentity, isPurchasingMaterialSheet, linkBtpToBom, findProgressForAssembly } from '../public/material-linkage.js';
 import { buildBtpShortageTemplate, filterBtpRowsByReceiptDate } from '../public/shortage-export.js';
 import { fillTemplateWorkbook } from '../public/template-xlsx.js';
 import { unzipSync } from '../public/vendor/fflate.mjs';
@@ -158,7 +158,7 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(app, /function auditBomGroupMarkup\(\{ rows, detailRows = rows, query = '' \}\)/);
   assert.match(app, /const contextRows = search \? filteredMaterialAuditRows\(\{ options, includeSearch:false \}\) : visibleRows/);
   assert.match(app, /const allGroups = auditBomGroups\(visibleRows, contextRows, search\)/);
-  assert.match(app, /function usableBtpRows\(\)[\s\S]*isPurchasingMaterialSheet\(row\.source_sheet\)[\s\S]*row\.description/);
+  assert.match(app, /function usableBtpRows\(\)[\s\S]*isPurchasingMaterialSheet\(row\.source_sheet\)[\s\S]*hasBtpIdentity\(row\)/);
   assert.match(app, /btp\.part_no \|\| btp\.description \|\| '—'/);
   assert.match(app, /allGroups\.slice\(pageIndex \* pageSize, \(pageIndex \+ 1\) \* pageSize\)/);
   assert.match(app, /search-match-row/);
@@ -334,6 +334,7 @@ test('BTP import keeps rows with Part No or detail name, drops empty rows, and e
     ['PART-1','PL8*100',null,1],
     [null,null,'Chi tiết không có mã',null],
     [null,null,null,7],
+    ['—',null,'-',2],
     [null,null,null,null],
     ['PART-ONLY',null,null,null]];
   const noPartNoRows = [...Array.from({length:25}, () => []), ['Tên chi tiết','Size',"T.Q'ty"], ['Tên duy nhất','PL10*50',1]];
@@ -351,6 +352,8 @@ test('BTP import keeps rows with Part No or detail name, drops empty rows, and e
   assert.equal(isPurchasingMaterialSheet('BTP-Purchasing'), true);
   assert.equal(isPurchasingMaterialSheet('Purchasing'), true);
   assert.equal(isPurchasingMaterialSheet('BTP-Purchasing-Notes'), false);
+  assert.equal(hasBtpIdentity({ part_no:'—', description:' - ' }), false);
+  assert.equal(hasBtpIdentity({ part_no:null, description:'Tên chi tiết' }), true);
 });
 
 test('PL parser detects shifted headers and maps receipt record dates, normalizing duplicates', () => {

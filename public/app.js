@@ -5,7 +5,7 @@ import { getBtpShortageQuantity, getBtpShortageWeight, highlightMatch } from './
 import { formatMaterialDate } from './material-display.js';
 import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortage-export.js';
 import { renderMaterialDashboard } from './material-dashboard.js';
-import { buildMaterialAuditRows, isPurchasingMaterialSheet, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
+import { buildMaterialAuditRows, hasBtpIdentity, isPurchasingMaterialSheet, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
@@ -167,7 +167,7 @@ function overviewPage() {
 }
 function usableBtpRows() {
   return (state.btpData?.rows || []).filter((row) => !isPurchasingMaterialSheet(row.source_sheet)
-    && (String(row.part_no ?? '').trim() || String(row.description ?? '').trim()));
+    && hasBtpIdentity(row));
 }
 function auditSheetOptions() {
   const rows = usableBtpRows();

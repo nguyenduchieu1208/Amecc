@@ -10,6 +10,14 @@ export function isPurchasingMaterialSheet(value) {
   return materialSheetName(value).toLocaleLowerCase().replace(/[^a-z0-9]/g, '') === 'purchasing';
 }
 
+export function hasBtpIdentity(row) {
+  return [row?.part_no, row?.description].some((value) => {
+    if (value === null || value === undefined) return false;
+    const text = String(value).trim();
+    return Boolean(text) && !/^[-–—]+$/u.test(text);
+  });
+}
+
 export function materialSheetKey(sourceFile, sourceSheet) {
   return JSON.stringify([String(sourceFile ?? '').trim(), materialSheetName(sourceSheet)]);
 }

@@ -1,4 +1,4 @@
-import { isPurchasingMaterialSheet } from './material-linkage.js';
+import { hasBtpIdentity, isPurchasingMaterialSheet } from './material-linkage.js';
 
 const MATERIAL_FIELDS = {
   2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 7: 'size', 12: 'quantity',
@@ -187,7 +187,7 @@ function parseBtpSheet(sheetName, rows, xlsx) {
     const fields = {};
     for (const field of BTP_COLUMNS) fields[field] = null;
     for (const [column, field] of Object.entries(columns)) fields[field] = normalizeValue(raw[Number(column) - 1]);
-    if (!fields.part_no && !fields.description) continue;
+    if (!hasBtpIdentity(fields)) continue;
     const notes = [...new Set(noteColumns.map((column) => normalizeValue(raw[column])).filter(Boolean))];
     if (notes.length) fields.note = notes.join(' | ');
     for (const field of ['length_mm', 'unit_weight', 'total_weight', 'design_quantity', 'received', 'remaining']) fields[field] = btpNumeric(fields[field]);
