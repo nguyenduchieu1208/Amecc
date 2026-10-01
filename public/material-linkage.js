@@ -6,6 +6,10 @@ export function materialSheetName(value) {
   return String(value ?? '').trim().replace(/^BTP[-_\s]*/i, '').trim();
 }
 
+export function isPurchasingMaterialSheet(value) {
+  return materialSheetName(value).toLocaleLowerCase().replace(/[^a-z0-9]/g, '') === 'purchasing';
+}
+
 export function materialSheetKey(sourceFile, sourceSheet) {
   return JSON.stringify([String(sourceFile ?? '').trim(), materialSheetName(sourceSheet)]);
 }

@@ -8,7 +8,7 @@ import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js
 import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch, summarizeBtpShortages } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 import { renderMaterialDashboard } from '../public/material-dashboard.js';
-import { buildMaterialAuditRows, linkBtpToBom, findProgressForAssembly } from '../public/material-linkage.js';
+import { buildMaterialAuditRows, isPurchasingMaterialSheet, linkBtpToBom, findProgressForAssembly } from '../public/material-linkage.js';
 import { buildBtpShortageTemplate, filterBtpRowsByReceiptDate } from '../public/shortage-export.js';
 import { fillTemplateWorkbook } from '../public/template-xlsx.js';
 import { unzipSync } from '../public/vendor/fflate.mjs';
@@ -158,9 +158,13 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(app, /function auditBomGroupMarkup\(\{ rows, detailRows = rows, query = '' \}\)/);
   assert.match(app, /const contextRows = search \? filteredMaterialAuditRows\(\{ options, includeSearch:false \}\) : visibleRows/);
   assert.match(app, /const allGroups = auditBomGroups\(visibleRows, contextRows, search\)/);
+  assert.match(app, /function usableBtpRows\(\)[\s\S]*isPurchasingMaterialSheet\(row\.source_sheet\)[\s\S]*row\.description/);
+  assert.match(app, /btp\.part_no \|\| btp\.description \|\| '—'/);
   assert.match(app, /allGroups\.slice\(pageIndex \* pageSize, \(pageIndex \+ 1\) \* pageSize\)/);
   assert.match(app, /search-match-row/);
   assert.match(enhancements, /\.bom-btp-table tbody tr\.search-match-row td/);
+  assert.match(enhancements, /\.bom-btp-group\[open\] \.bom-search-match-preview-wrap \{ display:none; \}/);
+  assert.match(enhancements, /\.sheet-check-option input \{ grid-column:1; grid-row:1\/3;/);
   assert.match(app, /<details class="bom-btp-group">/);
   assert.match(app, /<summary class="bom-btp-group-summary">[\s\S]*<div class="bom-btp-table-wrap"><table class="bom-btp-table">/);
   assert.match(app, /event\.replace\(\/:\\s\*\/, ': '\)/);
@@ -322,6 +326,31 @@ test('BTP parser recognizes detail headers, keeps dated progress, and excludes i
     unit_weight:2.4, total_weight:4.8, design_quantity:2, received:0, remaining:1, daily_progress:'21/07/2026: 3; 23/07/2026: 1', joint_check:'✓', unit:'MCC', status:'Còn thiếu', note:'Kiểm tra ghi chú',
   });
   assert.equal(Object.keys(payload.btp_records[0]).some((field) => ['weight','issue_date','date_issue','MPR No','Cutting No.'].includes(field)), false);
+});
+
+test('BTP import keeps rows with Part No or detail name, drops empty rows, and excludes Purchasing', () => {
+  const headers = ['Part No.1','Size','Tên chi tiết',"T.Q'ty"];
+  const rows = [...Array.from({length:25}, () => []), headers,
+    ['PART-1','PL8*100',null,1],
+    [null,null,'Chi tiết không có mã',null],
+    [null,null,null,7],
+    [null,null,null,null],
+    ['PART-ONLY',null,null,null]];
+  const noPartNoRows = [...Array.from({length:25}, () => []), ['Tên chi tiết','Size',"T.Q'ty"], ['Tên duy nhất','PL10*50',1]];
+  const workbook = { SheetNames:['BTP-A290T1P1','BTP-NoPartNo','BTP-Purchasing'], Sheets:{ 'BTP-A290T1P1':{}, 'BTP-NoPartNo':{}, 'BTP-Purchasing':{} } };
+  const parser = { utils:{ sheet_to_json:(sheet) => sheet === workbook.Sheets['BTP-A290T1P1'] ? rows
+    : sheet === workbook.Sheets['BTP-NoPartNo'] ? noPartNoRows
+      : [...Array.from({length:25}, () => []), headers, ['PURCHASE-1', 'PL1*1', 'Không được nhập', 1]] } };
+  const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
+  assert.deepEqual(payload.btp_records.map((row) => row.part_no || row.description), ['PART-1','Chi tiết không có mã','PART-ONLY','Tên duy nhất']);
+  assert.equal(payload.btp_records[1].part_no, null);
+  assert.equal(payload.btp_records[1].description, 'Chi tiết không có mã');
+  assert.equal(payload.btp_records[3].part_no, null);
+  assert.ok(payload.btp_records.slice(0,3).every((row) => row.source_sheet === 'BTP-A290T1P1'));
+  assert.equal(payload.btp_records[3].source_sheet, 'BTP-NoPartNo');
+  assert.equal(isPurchasingMaterialSheet('BTP-Purchasing'), true);
+  assert.equal(isPurchasingMaterialSheet('Purchasing'), true);
+  assert.equal(isPurchasingMaterialSheet('BTP-Purchasing-Notes'), false);
 });
 
 test('PL parser detects shifted headers and maps receipt record dates, normalizing duplicates', () => {

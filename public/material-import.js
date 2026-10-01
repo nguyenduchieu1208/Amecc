@@ -1,3 +1,5 @@
+import { isPurchasingMaterialSheet } from './material-linkage.js';
+
 const MATERIAL_FIELDS = {
   2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 7: 'size', 12: 'quantity',
   14: 'weight', 15: 'scope', 20: 'received', 21: 'remaining',
@@ -24,7 +26,7 @@ export const BTP_COLUMNS = [
 const BTP_HEADER_ALIASES = {
   part_no: ['partno1', 'partno', 'mabtpchitiet', 'mabtpchitietchitiet'],
   material_type: ['chungloai', 'chungloai1'],
-  description: ['description', 'mota'],
+  description: ['description', 'mota', 'tenchitiet', 'partname', 'partdescription', 'detailname', 'detaildescription'],
   material: ['material', 'grade', 'steelgrade'],
   unit: ['dvg'],
   size: ['size', 'quycach', 'quycachsize'],
@@ -116,7 +118,8 @@ function btpHeaderIndex(rows) {
   for (let index = 0; index < Math.min(rows.length, 60); index += 1) {
     const normalized = rows[index].map(normalizeHeader);
     const hasSize = normalized.some((value) => ['size', 'quycach', 'quycachsize'].includes(value));
-    if ((normalized.includes('partno1') || normalized.includes('mabtpchitiet'))
+    const hasIdentity = normalized.some((value) => BTP_HEADER_ALIASES.part_no.includes(value) || BTP_HEADER_ALIASES.description.includes(value));
+    if (hasIdentity
       && hasSize && (normalized.includes('tqty') || normalized.includes('slthietke') || normalized.includes('sltk'))) return index;
   }
   return -1;
@@ -177,14 +180,14 @@ function parseBtpSheet(sheetName, rows, xlsx) {
     const date = btpDateHeader(value, xlsx, fallbackYear);
     return date ? [{ column: index, date }] : [];
   });
-  if (!Object.values(columns).includes('part_no')) return [];
+  if (!Object.values(columns).some((field) => field === 'part_no' || field === 'description')) return [];
   const rowsOut = [];
   for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
     const raw = rows[rowIndex];
     const fields = {};
     for (const field of BTP_COLUMNS) fields[field] = null;
     for (const [column, field] of Object.entries(columns)) fields[field] = normalizeValue(raw[Number(column) - 1]);
-    if (!fields.part_no) continue;
+    if (!fields.part_no && !fields.description) continue;
     const notes = [...new Set(noteColumns.map((column) => normalizeValue(raw[column])).filter(Boolean))];
     if (notes.length) fields.note = notes.join(' | ');
     for (const field of ['length_mm', 'unit_weight', 'total_weight', 'design_quantity', 'received', 'remaining']) fields[field] = btpNumeric(fields[field]);
@@ -271,6 +274,7 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
   const btpRecords = [];
   for (const sheetName of workbook.SheetNames) {
     const name = sheetName.toLowerCase();
+    if (isPurchasingMaterialSheet(sheetName)) continue;
     const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], {
       // Keep Excel dates as serials so receipt-day parsing is independent of the browser timezone.
       header: 1, raw: true, cellDates: false, defval: null, blankrows: true,

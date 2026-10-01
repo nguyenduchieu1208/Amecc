@@ -5,7 +5,7 @@ import { getBtpShortageQuantity, getBtpShortageWeight, highlightMatch } from './
 import { formatMaterialDate } from './material-display.js';
 import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortage-export.js';
 import { renderMaterialDashboard } from './material-dashboard.js';
-import { buildMaterialAuditRows, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
+import { buildMaterialAuditRows, isPurchasingMaterialSheet, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
@@ -165,8 +165,12 @@ function overviewPage() {
     <div class="section-heading"><div><span class="eyebrow">PROJECT PORTFOLIO</span><h3>Danh mục dự án</h3></div><span class="count-chip">${state.projects.length} dự án</span></div>
     ${state.projects.length ? `<div class="project-grid">${[...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })).map((project) => `<article class="project-card"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">TÊN TỪ FILE NGUỒN</span><h4>${esc(projectFilenameLabel(project))}</h4><p>Mã dự án: ${esc(project.code)} · ${esc(project.source_file || `${project.code}.xlsx`)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions"><a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a><a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a></div></article>`).join('')}</div>` : '<div class="empty-state"><strong>Chưa có dữ liệu dự án</strong><p>Admin cần đăng nhập và nhập workbook PL/QLDA để bắt đầu.</p></div>'}`;
 }
+function usableBtpRows() {
+  return (state.btpData?.rows || []).filter((row) => !isPurchasingMaterialSheet(row.source_sheet)
+    && (String(row.part_no ?? '').trim() || String(row.description ?? '').trim()));
+}
 function auditSheetOptions() {
-  const rows = state.btpData?.rows || [];
+  const rows = usableBtpRows();
   return [...new Map(rows.filter((row) => row.source_file && row.source_sheet)
     .map((row) => {
       const source_sheet = materialSheetName(row.source_sheet);
@@ -213,15 +217,39 @@ function auditBtpTableRowMarkup(row, query = '') {
   const status = btp.status || auditStatus(row);
   const materialType = String(btp.material_type || '').toLocaleLowerCase();
   const typeClass = materialType.includes('shape') ? 'shape' : materialType.includes('plate') ? 'plate' : '';
-  const partNo = query ? highlightMatch(btp.part_no, query) : fmt(btp.part_no);
+  const partLabel = btp.part_no || btp.description || '—';
+  const partNo = query ? highlightMatch(partLabel, query) : fmt(partLabel);
   return `<tr class="${[remaining === 0 ? 'btp-complete-row' : '',matched ? 'search-match-row' : ''].filter(Boolean).join(' ')}"><td class="btp-frozen-code audit-code">${partNo}</td><td><span class="btp-type-chip ${typeClass}">${fmt(btp.material_type)}</span></td><td><span class="btp-unit-chip">${fmt(btp.unit)}</span></td><td>${fmt(btp.size)}</td><td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell received-value">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td><td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${fmt(btp.joint_check)}</td><td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-description">${fmt(btp.note || '')}</td></tr>`;
+}
+function auditSearchPreviewMarkup(row, query) {
+  const btp = row.btp;
+  const partNo = btp?.part_no || btp?.description || row.bomLine?.part_no || row.bomLine?.description || '—';
+  const remaining = getBtpShortageQuantity(btp);
+  const materialType = String(btp?.material_type || '').toLocaleLowerCase();
+  const typeClass = materialType.includes('shape') ? 'shape' : materialType.includes('plate') ? 'plate' : '';
+  const status = btp ? btp.status || auditStatus(row) : 'Chưa có BTP';
+  const cells = [
+    ['Mã BTP (Chi tiết)', query ? highlightMatch(partNo, query) : fmt(partNo), 'audit-code'],
+    ['Chủng loại', btp ? `<span class="btp-type-chip ${typeClass}">${fmt(btp.material_type)}</span>` : '—', ''],
+    ['DVG', btp ? `<span class="btp-unit-chip">${fmt(btp.unit)}</span>` : '—', ''],
+    ['Quy cách (Size)', fmt(btp?.size)],
+    ['Chiều dài (mm)', fmt(btp?.length_mm)],
+    ['SL thiết kế', fmt(btp?.design_quantity)],
+    ['Đã nhận', fmt(btp?.received)],
+    ['Còn thiếu', fmt(remaining)],
+    ['Tiến độ theo ngày', btp ? auditReceiptEvents(row) : '<span class="muted">Chưa có ngày</span>'],
+    ['Ktra nối', fmt(btp?.joint_check)],
+    ['Trạng thái', `<span class="status-pill ${btp ? auditStatusClass(status) : 'danger'}">${esc(status)}</span>`],
+    ['Ghi chú', fmt(btp?.note || (btp ? '' : 'BOM chưa có dòng BTP'))],
+  ];
+  return `<span class="bom-search-match-line">${cells.map(([label, value, extra = '']) => `<span class="audit-search-cell ${extra}"><small>${label}</small><b>${value}</b></span>`).join('')}</span>`;
 }
 function auditBomGroupKey(row) {
   const parent = row.bomParent;
   const sheet = materialSheetName(row.btp_source_sheet || row.source_sheet);
   return parent?.assembly
     ? `${row.bom_source_file || parent.source_file || row.source_file}|${materialSheetName(parent.source_sheet || row.source_sheet)}|${parent.assembly}`
-    : `${row.btp_source_file || row.source_file}|${sheet}|unlinked|${row.btp?.part_no || row.bomLine?.part_no || row.bomLine?.source_row || ''}`;
+    : `${row.btp_source_file || row.source_file}|${sheet}|unlinked|${row.btp?.part_no || row.btp?.source_row || row.btp?.description || row.bomLine?.part_no || row.bomLine?.source_row || ''}`;
 }
 function auditBomGroups(rows, contextRows = rows, query = '') {
   const groups = new Map();
@@ -254,13 +282,15 @@ function auditBomGroupMarkup({ rows, detailRows = rows, query = '' }) {
   const dimensions = parent?.size ? `<span class="bom-meta-chip">${query ? highlightMatch(parent.size, query) : fmt(parent.size)}</span>` : '';
   const drawing = parent?.drawing ? `<span class="bom-meta-chip">${query ? highlightMatch(parent.drawing, query) : fmt(parent.drawing)}</span>` : '';
   const statusClass = status === 'Đã đủ' ? 'success' : status === 'Đang về' ? 'warning' : 'neutral';
+  const searchMatches = query ? detailRows.filter((row) => auditDetailMatchesSearch(row, query)) : [];
+  const searchPreview = searchMatches.length ? `<span class="bom-search-match-preview-wrap"><span class="bom-search-match-label">${fmt(searchMatches.length)} dòng khớp · bấm thẻ để xem đủ BTP</span>${searchMatches.map((row) => auditSearchPreviewMarkup(row, query)).join('')}</span>` : '';
   return `<details class="bom-btp-group">
-    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${query ? highlightMatch(assembly, query) : fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${progress.toFixed(1)}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span></summary>
+    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${query ? highlightMatch(assembly, query) : fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${progress.toFixed(1)}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span>${searchPreview}</summary>
     <div class="bom-btp-table-wrap"><table class="bom-btp-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${detailRows.map((row) => auditBtpTableRowMarkup(row, query)).join('')}</tbody></table></div>
   </details>`;
 }
 function materialAuditRows() {
-  return buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:state.btpData?.rows || [], progressRows:state.progressData?.rows || [] });
+  return buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:usableBtpRows(), progressRows:state.progressData?.rows || [] });
 }
 function auditSelectedKeys(options = auditSheetOptions()) {
   const all = options.map((option) => option.key);
@@ -297,7 +327,7 @@ function materialsAuditPage() {
   const visibleRows = filteredMaterialAuditRows({ options });
   const search = String(state.materialSearch || '').trim();
   const contextRows = search ? filteredMaterialAuditRows({ options, includeSearch:false }) : visibleRows;
-  const selectedBtpRows = (state.btpData?.rows || []).filter((row) => selected.has(materialSheetKey(row.source_file, row.source_sheet)));
+  const selectedBtpRows = usableBtpRows().filter((row) => selected.has(materialSheetKey(row.source_file, row.source_sheet)));
   const deliveryUnits = [...new Set(selectedBtpRows.map((row) => String(row.unit ?? '').trim()).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right, 'vi', { numeric:true, sensitivity:'base' }));
   const shortageCount = visibleRows.filter((row) => row.btp && getBtpShortageQuantity(row.btp) > 0).length;
@@ -313,7 +343,7 @@ function materialsAuditPage() {
   const selectedLabel = allSelected ? `Tất cả sheet (${options.length})` : `${selected.size}/${options.length} sheet`;
   const filteredBtp = visibleRows.filter((row) => row.btp).map((row) => row.btp);
   const project = state.projects.find((item) => item.code === state.currentProject);
-  const filename = state.btpData?.rows?.[0]?.source_file || state.data?.rows?.[0]?.source_file || `${state.currentProject}PL.xlsx`;
+  const filename = usableBtpRows()[0]?.source_file || state.data?.rows?.[0]?.source_file || `${state.currentProject}PL.xlsx`;
   const qldaFilename = state.progressData?.rows?.[0]?.source_file || `${state.currentProject}.xlsx`;
   return `${heading('MATERIAL CONTROL · BOM / BTP / QLDA','BOM & Vật tư PL','Đối chiếu BOM, BTP và tiến độ QLDA theo tên file dự án; tất cả ngày nhận được giữ lại để kiểm tra.')}
     <section class="material-audit-controls" aria-label="Lọc và xuất dữ liệu BOM, BTP">
@@ -336,7 +366,7 @@ function materialsAuditPage() {
 }
 function materialDashboardPage() {
   const options = auditSheetOptions();
-  const rows = state.btpData?.rows || [];
+  const rows = usableBtpRows();
   const selectedRows = rows.filter((row) => !state.materialDashboardSheetFilter
     || materialSheetKey(row.source_file, row.source_sheet) === state.materialDashboardSheetFilter);
   const selectedLabel = state.materialDashboardSheetFilter
