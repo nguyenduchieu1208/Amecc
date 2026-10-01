@@ -10,7 +10,7 @@ const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -56,9 +56,7 @@ async function api(path, options = {}) {
 function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
 function shell() {
   const isAdmin = state.user?.role === 'admin';
-  const navigation = ADMIN_MODE
-    ? '<div class="nav-label">QUẢN TRỊ</div><a class="nav-link active" href="#admin">' + icon('admin') + '<span>Cập nhật dữ liệu</span></a><a class="nav-link" href="./index.html">' + icon('overview') + '<span>Xem dữ liệu dự án</span></a>'
-    : `<div class="nav-label">KHÔNG GIAN LÀM VIỆC</div>
+  const navigation = `<div class="nav-label">KHÔNG GIAN LÀM VIỆC</div>
       <nav class="nav-list" aria-label="Điều hướng chính">
         <a class="nav-link ${state.page === 'overview' ? 'active' : ''}" href="#overview">${icon('overview')}<span>Tổng quan</span></a>
         <div class="nav-group ${['materials','materials-dashboard'].includes(state.page) ? 'expanded' : ''}">
@@ -70,10 +68,10 @@ function shell() {
           <div class="nav-children"><a class="nav-child ${state.page === 'projects' ? 'active' : ''}" href="#projects">Tiến độ dự án</a></div>
         </div>
       </nav>
-      ${isAdmin ? `<div class="nav-label admin-nav-label">QUẢN TRỊ</div><a class="nav-link" href="./admin.html">${icon('admin')}<span>Tài khoản &amp; cập nhật</span></a>` : ''}`;
+      ${isAdmin ? `<div class="nav-label admin-nav-label">QUẢN TRỊ</div><a class="nav-link ${state.page === 'admin' ? 'active' : ''}" href="${ADMIN_MODE ? '#admin' : './admin.html'}">${icon('admin')}<span>Cập nhật dữ liệu</span></a>` : ''}`;
   app.innerHTML = `<div class="shell theme-${esc(state.theme)} ${state.sidebarCollapsed ? 'sidebar-collapsed' : ''}">
     <aside class="sidebar" id="sidebar">
-      <a class="brand" href="${ADMIN_MODE ? './index.html' : '#overview'}" aria-label="AMECC - Trang tổng quan"><img src="./assets/logo.png" alt="AMECC"><span class="brand-caption">PROJECT CONTROL</span></a>
+      <a class="brand" href="#overview" aria-label="AMECC - Trang tổng quan"><img src="./assets/logo.png" alt="AMECC"><span class="brand-caption">PROJECT CONTROL</span></a>
       ${navigation}
       <div class="sidebar-bottom">
         <section class="sidebar-settings" aria-label="Cài đặt giao diện"><button class="settings-toggle" id="settingsToggle" type="button" aria-label="Mở cài đặt giao diện" title="Cài đặt giao diện">${icon('settings')}<span>Cài đặt giao diện</span></button><div class="settings-heading">CÀI ĐẶT GIAO DIỆN</div><label class="settings-theme-label">Giao diện<select class="theme-select" id="themeSelect" aria-label="Chọn giao diện">${themes.map((theme) => `<option value="${theme}" ${theme === state.theme ? 'selected' : ''}>${themeLabels[theme]}</option>`).join('')}</select></label></section>
@@ -346,15 +344,20 @@ function materialsAuditPage() {
   const filename = usableBtpRows()[0]?.source_file || state.data?.rows?.[0]?.source_file || `${state.currentProject}PL.xlsx`;
   const qldaFilename = state.progressData?.rows?.[0]?.source_file || `${state.currentProject}.xlsx`;
   return `${heading('MATERIAL CONTROL · BOM / BTP / QLDA','BOM & Vật tư PL','Đối chiếu BOM, BTP và tiến độ QLDA theo tên file dự án; tất cả ngày nhận được giữ lại để kiểm tra.')}
-    <section class="material-audit-controls" aria-label="Lọc và xuất dữ liệu BOM, BTP">
+    <section class="material-audit-controls ${state.materialMobileFiltersOpen ? 'mobile-expanded' : ''}" aria-label="Lọc và xuất dữ liệu BOM, BTP">
       <div class="audit-filter-grid">
-        ${projectSelect()}
-        <label class="filter-label">Sheet BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
-        <label class="filter-label">Ngày nhận<div class="date-filter-control"><input type="date" id="materialReceiptDateFilter" value="${esc(state.materialReceiptDateFilter)}" aria-label="Chọn hoặc nhập ngày nhận" title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp">${state.materialReceiptDateFilter ? '<button class="date-filter-clear" id="clearMaterialReceiptDate" type="button" title="Xem tất cả ngày">Xóa</button>' : ''}</div></label>
-        <label class="filter-label">Đơn vị giao<select id="materialUnitFilter"><option value="" ${state.materialUnitFilter ? '' : 'selected'}>Tất cả đơn vị</option>${deliveryUnits.map((unit) => `<option value="${esc(unit)}" ${state.materialUnitFilter === unit ? 'selected' : ''}>${esc(unit)}</option>`).join('')}</select></label>
-        <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
-        <label class="search-box audit-search">${icon('search')}<input id="materialSearch" type="search" inputmode="search" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="Tìm mã BTP, chủng loại, DVG, size, ghi chú…" value="${esc(state.materialSearch)}"></label>
-        <button class="button primary audit-export-button" id="exportBtpShortage" type="button" ${shortageCount ? '' : 'disabled'}>${icon('download')}<span>Xuất List thiếu</span></button>
+        <div class="mobile-audit-extra-filters" id="mobileAuditExtraFilters">
+          ${projectSelect()}
+          <label class="filter-label">Sheet BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
+          <label class="filter-label">Ngày nhận<div class="date-filter-control"><input type="date" id="materialReceiptDateFilter" value="${esc(state.materialReceiptDateFilter)}" aria-label="Chọn hoặc nhập ngày nhận" title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp">${state.materialReceiptDateFilter ? '<button class="date-filter-clear" id="clearMaterialReceiptDate" type="button" title="Xem tất cả ngày">Xóa</button>' : ''}</div></label>
+          <label class="filter-label">Đơn vị giao<select id="materialUnitFilter"><option value="" ${state.materialUnitFilter ? '' : 'selected'}>Tất cả đơn vị</option>${deliveryUnits.map((unit) => `<option value="${esc(unit)}" ${state.materialUnitFilter === unit ? 'selected' : ''}>${esc(unit)}</option>`).join('')}</select></label>
+          <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
+          <button class="button primary audit-export-button" id="exportBtpShortage" type="button" ${shortageCount ? '' : 'disabled'}>${icon('download')}<span>Xuất List thiếu</span></button>
+        </div>
+        <div class="mobile-audit-search-row">
+          <label class="search-box audit-search">${icon('search')}<input id="materialSearch" type="search" inputmode="search" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="Tìm mã BTP, chủng loại, DVG, size, ghi chú…" value="${esc(state.materialSearch)}"></label>
+          <button class="button mobile-audit-filter-toggle" id="toggleMobileAuditFilters" type="button" aria-controls="mobileAuditExtraFilters" aria-expanded="${state.materialMobileFiltersOpen}"><span>${state.materialMobileFiltersOpen ? 'Thu gọn' : 'Bộ lọc'}</span><span class="mobile-filter-chevron" aria-hidden="true">⌄</span></button>
+        </div>
       </div>
       <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
     </section>
@@ -514,6 +517,14 @@ function bindPage() {
     else if (nextShortageNote) page.append(nextShortageNote);
     bindAuditPagination();
   };
+  document.querySelector('#toggleMobileAuditFilters')?.addEventListener('click', (event) => {
+    state.materialMobileFiltersOpen = !state.materialMobileFiltersOpen;
+    const controls = document.querySelector('.material-audit-controls');
+    controls?.classList.toggle('mobile-expanded', state.materialMobileFiltersOpen);
+    const button = event.currentTarget;
+    button.setAttribute('aria-expanded', String(state.materialMobileFiltersOpen));
+    button.querySelector('span')?.replaceChildren(state.materialMobileFiltersOpen ? 'Thu gọn' : 'Bộ lọc');
+  });
   document.querySelector('#materialSearch')?.addEventListener('input', (event) => {
     state.materialSearch = event.currentTarget.value;
     state.materialPageIndex = 0;
@@ -773,7 +784,8 @@ async function renderPage() {
 async function navigate() {
   if (ADMIN_MODE) {
     if (state.user?.role !== 'admin') { loginScreen(); return; }
-    state.page = 'admin';
+    const key = location.hash.replace(/^#\/?/, '') || 'admin';
+    state.page = ['overview','materials','materials-dashboard','projects','admin'].includes(key) ? key : 'admin';
     shell(); await renderPage();
     return;
   }
