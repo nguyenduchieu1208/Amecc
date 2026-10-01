@@ -12,7 +12,7 @@ const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -60,6 +60,27 @@ async function api(path, options = {}) {
   }
   return data;
 }
+let spreadsheetLibraryPromise;
+function loadSpreadsheetLibrary() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!spreadsheetLibraryPromise) {
+    spreadsheetLibraryPromise = new Promise((resolve, reject) => {
+      const fail = () => {
+        spreadsheetLibraryPromise = null;
+        reject(new Error('Không tải được thư viện đọc Excel; hãy tải lại trang rồi thử lại.'));
+      };
+      const script = document.createElement('script');
+      script.src = new URL('./vendor/xlsx.full.min.js', import.meta.url).href;
+      script.async = true;
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : fail();
+      script.onerror = fail;
+      document.head.append(script);
+    });
+  }
+  return spreadsheetLibraryPromise;
+}
+const projectDataRequests = new Map();
+let renderGeneration = 0;
 function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
 function shell() {
   const isAdmin = state.user?.role === 'admin';
@@ -171,12 +192,16 @@ function overviewPage() {
     ${state.projects.length ? `<div class="project-grid">${[...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })).map((project) => `<article class="project-card"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">TÊN TỪ FILE NGUỒN</span><h4>${esc(projectFilenameLabel(project))}</h4><p>Mã dự án: ${esc(project.code)} · ${esc(project.source_file || `${project.code}.xlsx`)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions"><a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a><a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a></div></article>`).join('')}</div>` : '<div class="empty-state"><strong>Chưa có dữ liệu dự án</strong><p>Admin cần đăng nhập và nhập workbook PL/QLDA để bắt đầu.</p></div>'}`;
 }
 function usableBtpRows() {
-  return (state.btpData?.rows || []).filter((row) => !isPurchasingMaterialSheet(row.source_sheet)
+  const cache = materialAuditCache();
+  if (!cache.usableBtpRows) cache.usableBtpRows = (state.btpData?.rows || []).filter((row) => !isPurchasingMaterialSheet(row.source_sheet)
     && hasBtpIdentity(row));
+  return cache.usableBtpRows;
 }
 function auditSheetOptions() {
+  const cache = materialAuditCache();
+  if (cache.sheetOptions) return cache.sheetOptions;
   const rows = usableBtpRows();
-  return [...new Map(rows.filter((row) => row.source_file && row.source_sheet)
+  cache.sheetOptions = [...new Map(rows.filter((row) => row.source_file && row.source_sheet)
     .map((row) => {
       const source_sheet = materialSheetName(row.source_sheet);
       const key = materialSheetKey(row.source_file, source_sheet);
@@ -184,6 +209,7 @@ function auditSheetOptions() {
     })).values()]
     .sort((left, right) => left.source_sheet.localeCompare(right.source_sheet, 'vi', { numeric:true, sensitivity:'base' })
       || left.source_file.localeCompare(right.source_file, 'vi', { numeric:true, sensitivity:'base' }));
+  return cache.sheetOptions;
 }
 function auditStatus(row) {
   if (row.kind === 'bom-only') return 'Chưa có BTP';
@@ -294,8 +320,22 @@ function auditBomGroupMarkup({ rows, detailRows = rows, query = '' }) {
     <div class="bom-btp-table-wrap"><table class="bom-btp-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${detailRows.map((row) => auditBtpTableRowMarkup(row, query)).join('')}</tbody></table></div>
   </details>`;
 }
+function materialAuditCache() {
+  const { data, btpData, progressData } = state;
+  const current = state.auditDataCache;
+  if (!current || current.data !== data || current.btpData !== btpData || current.progressData !== progressData) {
+    state.auditDataCache = { data, btpData, progressData, usableBtpRows:null, sheetOptions:null, rows:null };
+  }
+  return state.auditDataCache;
+}
 function materialAuditRows() {
-  return buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:usableBtpRows(), progressRows:state.progressData?.rows || [] });
+  const cache = materialAuditCache();
+  if (!cache.rows) cache.rows = buildMaterialAuditRows({ materialRows:state.data?.rows || [], btpRows:usableBtpRows(), progressRows:state.progressData?.rows || [] })
+    .sort((left, right) => Number(right.kind === 'bom-only') - Number(left.kind === 'bom-only')
+      || Number(getBtpShortageQuantity(right.btp) || 0) - Number(getBtpShortageQuantity(left.btp) || 0)
+      || String(left.source_sheet || '').localeCompare(String(right.source_sheet || ''), 'vi', { numeric:true, sensitivity:'base' })
+      || Number(left.btp?.source_row || left.bomLine?.source_row || 0) - Number(right.btp?.source_row || right.bomLine?.source_row || 0));
+  return cache.rows;
 }
 function auditSelectedKeys(options = auditSheetOptions()) {
   const all = options.map((option) => option.key);
@@ -321,10 +361,7 @@ function filteredMaterialAuditRows({ rows = materialAuditRows(), options = audit
     if (state.materialStatusFilter === 'unlinked' && row.bomStatus === 'matched' && row.qldaStatus === 'matched') return false;
     if (includeSearch && search && !materialAuditRowSearchText(row).includes(search)) return false;
     return status !== 'Không dùng';
-  }).sort((left, right) => Number(right.kind === 'bom-only') - Number(left.kind === 'bom-only')
-    || Number(getBtpShortageQuantity(right.btp) || 0) - Number(getBtpShortageQuantity(left.btp) || 0)
-    || String(left.source_sheet || '').localeCompare(String(right.source_sheet || ''), 'vi', { numeric:true, sensitivity:'base' })
-    || Number(left.btp?.source_row || left.bomLine?.source_row || 0) - Number(right.btp?.source_row || right.bomLine?.source_row || 0));
+  });
 }
 function materialsAuditPage() {
   const options = auditSheetOptions();
@@ -403,7 +440,7 @@ function projectsPage() {
 function adminPage() {
   return `${heading('ACCESS CONTROL · ADMIN','Quản trị tài khoản & dữ liệu','Tạo tài khoản chỉ xem và nhập dữ liệu thực từ workbook trên máy tính của bạn.')}
     <div class="admin-grid"><section class="panel"><div class="panel-title"><span class="eyebrow">USER ACCESS</span><h3>Tạo tài khoản người xem</h3><p>Tài khoản viewer chỉ có quyền đọc dữ liệu; không thể tải hoặc thay thế dữ liệu.</p></div><form id="viewerForm" class="form-grid"><label>Tên đăng nhập<input name="username" minlength="3" maxlength="64" required></label><label>Mật khẩu tạm (ít nhất 12 ký tự)<input name="password" type="password" minlength="12" required></label><button class="button primary" type="submit">Tạo tài khoản viewer</button><div class="form-message" id="viewerMessage" aria-live="polite"></div></form></section>
-    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>PL và BTP được phân tích trên trình duyệt rồi gửi JSON; có thể chọn nhiều file PL. Tải file trùng tên sẽ thay thế dữ liệu cũ cùng file.</p></div><form id="importForm" class="form-grid"><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL + BTP</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small id="importFileHint">Chọn một hoặc nhiều file PL, tên mỗi file kết thúc bằng PL.xlsx; tối đa ${MAX_MATERIAL_FILE_MB} MB/file.</small></label><div class="form-message import-project-preview" id="importProjectPreview" aria-live="polite">Mã dự án sẽ lấy từ tên file.</div><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section></div>
+    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>PL và BTP được phân tích trên trình duyệt rồi gửi JSON; có thể chọn nhiều file PL. Tải file trùng tên sẽ thay thế dữ liệu cũ cùng file.</p></div><form id="importForm" class="form-grid"><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL + BTP</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small id="importFileHint">Chọn một hoặc nhiều file PL, tên mỗi file kết thúc bằng PL.xlsx; tối đa ${MAX_MATERIAL_FILE_MB} MB/file.</small></label><div class="form-message import-project-preview" id="importProjectPreview" aria-live="polite">Mã dự án sẽ lấy từ tên file.</div><div class="import-file-progress" id="importFileProgress" aria-live="polite" hidden></div><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section></div>
     <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">PL / BTP FILES</span><h3>File vật tư đang lưu</h3><p>Xóa file tại đây để gỡ dữ liệu PL/BTP cũ trước khi nhập file thay thế. Tiến độ QLDA không bị ảnh hưởng.</p></div><div id="plFileList">${plFilesMarkup()}</div></section>
     <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">PROJECT DATA</span><h3>Các dự án trên hệ thống</h3></div>${state.projects.length ? `<div class="account-list">${state.projects.map((project) => `<div class="account-row"><b>${esc(project.code)}</b><span>${fmt(project.material_rows)} vật tư</span><span>${fmt(project.progress_rows)} tiến độ</span><small>${fmt(project.updated_at)}</small></div>`).join('')}</div>` : '<p class="muted">Chưa nhập workbook nào.</p>'}</section>`;
 }
@@ -421,6 +458,7 @@ function bindPlFileDeleteButtons() {
         method: 'DELETE', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ project_code: projectCode, filename }),
       });
+      invalidateProjectData(projectCode);
       await Promise.all([refreshProjects(), refreshPlFiles()]);
       const list = document.querySelector('#plFileList');
       if (list) list.innerHTML = plFilesMarkup();
@@ -440,6 +478,29 @@ function bindPage() {
   const importFile = document.querySelector('#importForm input[name="file"]');
   const importFileHint = document.querySelector('#importFileHint');
   const importProjectPreview = document.querySelector('#importProjectPreview');
+  const importFileProgress = document.querySelector('#importFileProgress');
+  const progressState = { files:[], statuses:[] };
+  const renderImportProgress = () => {
+    if (!importFileProgress) return;
+    if (!progressState.files.length) {
+      importFileProgress.hidden = true;
+      importFileProgress.replaceChildren();
+      return;
+    }
+    const completed = progressState.statuses.filter((item) => item.status === 'complete').length;
+    const failed = progressState.statuses.filter((item) => item.status === 'error').length;
+    importFileProgress.hidden = false;
+    importFileProgress.innerHTML = `<div class="import-file-progress-head"><strong>Tiến độ từng file</strong><span>${completed}/${progressState.files.length} hoàn tất${failed ? ` · ${failed} lỗi` : ''}</span></div><ul class="import-file-progress-list">${progressState.files.map((file, index) => {
+      const item = progressState.statuses[index] || { status:'pending', detail:'Chờ xử lý' };
+      const indicator = item.status === 'complete' ? '✓' : item.status === 'error' ? '!' : item.status === 'working' ? '' : '·';
+      return `<li class="import-file-progress-item ${item.status}"><span class="import-file-progress-indicator" aria-hidden="true">${indicator}</span><span class="import-file-progress-copy"><strong>${esc(file.name)}</strong><small>${esc(item.detail)}</small></span></li>`;
+    }).join('')}</ul>`;
+  };
+  const setImportProgress = (index, status, detail) => {
+    if (index < 0 || index >= progressState.files.length) return;
+    progressState.statuses[index] = { status, detail };
+    renderImportProgress();
+  };
   const updateImportProjectPreview = () => {
     if (!importProjectPreview) return;
     const files = [...(importFile?.files || [])];
@@ -466,8 +527,18 @@ function bindPage() {
       : 'Tên file là mã dự án.xlsx (ví dụ A290.xlsx), cần sheet Progress; tối đa 10 MB.';
     updateImportProjectPreview();
   };
-  importCategory?.addEventListener('change', updateImportFileMode);
-  importFile?.addEventListener('change', updateImportProjectPreview);
+  importCategory?.addEventListener('change', () => {
+    progressState.files = [];
+    progressState.statuses = [];
+    renderImportProgress();
+    updateImportFileMode();
+  });
+  importFile?.addEventListener('change', () => {
+    progressState.files = [...importFile.files];
+    progressState.statuses = progressState.files.map(() => ({ status:'pending', detail:'Sẵn sàng tải lên' }));
+    renderImportProgress();
+    updateImportProjectPreview();
+  });
   updateImportFileMode();
   document.querySelector('#projectFilter')?.addEventListener('change', async (event) => {
     state.currentProject = event.target.value;
@@ -481,7 +552,7 @@ function bindPage() {
     state.materialDashboardStartDate = '';
     state.materialDashboardEndDate = '';
     state.materialDashboardMetric = 'quantity';
-    await loadPageData(); renderPage();
+    renderPage();
   });
   const rerenderAudit = ({ keepDropdown = false } = {}) => {
     const page = document.querySelector('#page');
@@ -659,9 +730,10 @@ function bindPage() {
     try {
       let result;
       if (endpoint === 'materials') {
-        const xlsx = window.XLSX;
-        if (!xlsx) throw new Error('Không tải được thư viện đọc Excel; hãy tải lại trang rồi thử lại.');
         const files = [...form.querySelector('[name="file"]').files];
+        progressState.files = files;
+        progressState.statuses = files.map(() => ({ status:'pending', detail:'Chờ tải lên' }));
+        renderImportProgress();
         if (!files.length) throw new Error('Hãy chọn ít nhất một file PL.xlsx.');
         selectedMaterialFiles = files.length;
         const filenames = new Set();
@@ -674,21 +746,27 @@ function bindPage() {
           if (!/^[\w.-]+PL\.xlsx$/i.test(file.name)) throw new Error(`Tên file ${file.name} phải kết thúc bằng PL.xlsx, ví dụ M304PL.xlsx.`);
           projectCodes.add(projectCodeFromFilename(file.name, 'materials'));
         }
+        output.textContent = 'Đang tải thư viện đọc Excel…';
+        const xlsx = await loadSpreadsheetLibrary();
         for (const [fileIndex, file] of files.entries()) {
           try {
+            setImportProgress(fileIndex, 'working', `Đang đọc file ${fileIndex + 1}/${files.length}`);
             output.textContent = `Đang đọc file ${fileIndex + 1}/${files.length}: ${file.name}…`;
             const projectCode = projectCodeFromFilename(file.name, 'materials');
             const payload = await readMaterialWorkbook(file, projectCode, xlsx);
             output.textContent = `Đang đọc file ${fileIndex + 1}/${files.length}: ${payload.filename} (${payload.records.length.toLocaleString('vi-VN')} dòng PL, ${payload.btp_records.length.toLocaleString('vi-VN')} dòng BTP)…`;
             for (const [category, categoryRecords] of [['materials', payload.records], ['btp', payload.btp_records]]) {
+              const categoryLabel = category === 'btp' ? 'BTP' : 'PL';
+              setImportProgress(fileIndex, 'working', `Đang tải ${categoryLabel}: 0/${categoryRecords.length.toLocaleString('vi-VN')} dòng`);
               if (!categoryRecords.length) {
                 await api('/api/admin/import/materials', {
                   method: 'POST', headers: { 'content-type': 'application/json' },
                   body: JSON.stringify({ action: 'clear-category', category, project_code: payload.project_code, filename: payload.filename }),
                 });
+                setImportProgress(fileIndex, 'working', `${categoryLabel} đã cập nhật · không có dòng`);
                 continue;
               }
-              output.textContent = `Đang nhập ${category === 'btp' ? 'BTP' : 'PL'} · ${payload.filename} (${categoryRecords.length.toLocaleString('vi-VN')} dòng)…`;
+              output.textContent = `Đang nhập ${categoryLabel} · ${payload.filename} (${categoryRecords.length.toLocaleString('vi-VN')} dòng)…`;
               const importSession = await api('/api/admin/import/materials', {
                 method: 'POST', headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ action: 'begin', category, project_code: payload.project_code, filename: payload.filename, expected_rows: categoryRecords.length }),
@@ -713,6 +791,7 @@ function bindPage() {
                   });
                   output.textContent = `${category === 'btp' ? 'BTP' : 'PL'} · ${payload.filename}: ${Math.min(start + records.length, categoryRecords.length).toLocaleString('vi-VN')}/${categoryRecords.length.toLocaleString('vi-VN')} dòng…`;
                   start += records.length;
+                  setImportProgress(fileIndex, 'working', `Đang tải ${categoryLabel}: ${start.toLocaleString('vi-VN')}/${categoryRecords.length.toLocaleString('vi-VN')} dòng`);
                 }
                 const commitRequest = {
                   method: 'POST', headers: { 'content-type': 'application/json' },
@@ -733,13 +812,19 @@ function bindPage() {
                 throw error;
               }
               completedMaterialRows += result.imported_rows;
+              setImportProgress(fileIndex, 'working', `${categoryLabel} đã tải xong · ${categoryRecords.length.toLocaleString('vi-VN')} dòng`);
             }
             completedMaterialFiles += 1;
+            setImportProgress(fileIndex, 'complete', `Đã tải xong PL và BTP · ${payload.records.length.toLocaleString('vi-VN')} PL + ${payload.btp_records.length.toLocaleString('vi-VN')} BTP`);
           } catch (error) {
             failedMaterialFiles.push({ filename: file.name, message: error.message || 'Lỗi không xác định' });
+            setImportProgress(fileIndex, 'error', `Lỗi: ${error.message || 'Không xác định'}`);
             if (error.status === 429) {
               importStopReason = error.message;
               unprocessedMaterialFiles = files.length - fileIndex - 1;
+              for (let nextIndex = fileIndex + 1; nextIndex < files.length; nextIndex += 1) {
+                setImportProgress(nextIndex, 'pending', 'Chưa gửi · dừng theo giới hạn API');
+              }
               break;
             }
           }
@@ -747,15 +832,20 @@ function bindPage() {
         result = { project_code: [...projectCodes].join(', '), imported_rows: completedMaterialRows };
       } else {
         const files = [...form.querySelector('[name="file"]').files];
+        progressState.files = files;
+        progressState.statuses = files.map(() => ({ status:'pending', detail:'Chờ tải lên' }));
+        renderImportProgress();
         if (files.length !== 1) throw new Error('QLDA chỉ hỗ trợ chọn một file mỗi lần.');
         if (files[0].size === 0 || files[0].size > 10 * 1024 * 1024) throw new Error('File QLDA phải có dung lượng từ 1 byte đến 10 MB.');
         const file = files[0];
         const projectCode = projectCodeFromFilename(file.name, 'projects');
         projectCodes.add(projectCode);
-        const xlsx = window.XLSX;
-        if (!xlsx) throw new Error('Không tải được thư viện đọc Excel; hãy tải lại trang rồi thử lại.');
+        output.textContent = 'Đang tải thư viện đọc Excel…';
+        const xlsx = await loadSpreadsheetLibrary();
+        setImportProgress(0, 'working', 'Đang đọc sheet Progress');
         output.textContent = `Đang đọc sheet Progress trong ${file.name}…`;
         const records = await readProjectWorkbook(file, xlsx);
+        setImportProgress(0, 'working', `Đã đọc ${records.length.toLocaleString('vi-VN')} dòng · bắt đầu tải`);
         const importSession = await api('/api/admin/import/projects', {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ action: 'begin', filename: file.name, project_code: projectCode, expected_rows: records.length }),
@@ -777,6 +867,7 @@ function bindPage() {
             await api('/api/admin/import/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: chunkBody });
             start += chunkRecords.length;
             output.textContent = `QLDA · ${file.name}: ${start.toLocaleString('vi-VN')}/${records.length.toLocaleString('vi-VN')} dòng…`;
+            setImportProgress(0, 'working', `Đang tải QLDA: ${start.toLocaleString('vi-VN')}/${records.length.toLocaleString('vi-VN')} dòng`);
           }
           const commitRequest = {
             method: 'POST', headers: { 'content-type': 'application/json' },
@@ -796,6 +887,7 @@ function bindPage() {
           } catch { /* Expired imports are cleaned up automatically. */ }
           throw error;
         }
+        setImportProgress(0, 'complete', `Đã tải xong QLDA · ${records.length.toLocaleString('vi-VN')} dòng`);
       }
       if (endpoint === 'materials' && failedMaterialFiles.length) {
         const failedSummary = failedMaterialFiles.map(({ filename, message }) => `• ${filename}: ${message}`).join('\n');
@@ -815,6 +907,9 @@ function bindPage() {
       else await refreshProjects();
     }
     catch (error) {
+      progressState.statuses = progressState.statuses.map((item) => item.status === 'complete'
+        ? item : { status:'error', detail:`Không hoàn tất: ${error.message || 'Lỗi không xác định'}` });
+      renderImportProgress();
       output.textContent = completedMaterialRows
         ? `Đã nhập ${completedMaterialRows.toLocaleString('vi-VN')} dòng từ ${completedMaterialFiles}/${selectedMaterialFiles} file trước khi gặp lỗi: ${error.message}`
         : error.message;
@@ -825,7 +920,10 @@ function bindPage() {
         if (list) { list.innerHTML = plFilesMarkup(); bindPlFileDeleteButtons(); }
       }
     }
-    finally { button.disabled = false; }
+    finally {
+      for (const projectCode of projectCodes) invalidateProjectData(projectCode);
+      button.disabled = false;
+    }
   });
 }
 async function refreshProjects() { const result = await api('/api/projects'); state.projects = result.projects; }
@@ -834,22 +932,46 @@ async function refreshPlFiles() {
   const result = await api('/api/admin/pl-files');
   state.plFiles = result.files;
 }
-async function loadPageData() {
+function invalidateProjectData(projectCode) {
+  if (state.loadedProject !== projectCode) return;
   state.data = null;
   state.btpData = null;
   state.progressData = null;
-  if (!state.currentProject || !['materials','materials-dashboard','projects'].includes(state.page)) return;
-  if (['materials','materials-dashboard'].includes(state.page)) {
-    [state.data, state.btpData, state.progressData] = await Promise.all([
-      api(`/api/projects/${encodeURIComponent(state.currentProject)}/materials`),
-      api(`/api/projects/${encodeURIComponent(state.currentProject)}/btp`),
-      api(`/api/projects/${encodeURIComponent(state.currentProject)}/progress`),
-    ]);
-    return;
+  state.auditDataCache = null;
+}
+function resetProjectData(projectCode) {
+  state.loadedProject = projectCode;
+  state.data = null;
+  state.btpData = null;
+  state.progressData = null;
+  state.auditDataCache = null;
+}
+async function loadProjectDataField(projectCode, field, endpoint) {
+  if (state[field]) return;
+  const key = `${projectCode}:${field}`;
+  let request = projectDataRequests.get(key);
+  if (!request) {
+    request = api(`/api/projects/${encodeURIComponent(projectCode)}/${endpoint}`)
+      .finally(() => projectDataRequests.delete(key));
+    projectDataRequests.set(key, request);
   }
-  state.data = await api(`/api/projects/${encodeURIComponent(state.currentProject)}/progress`);
+  const result = await request;
+  if (state.currentProject === projectCode && state.loadedProject === projectCode && !state[field]) {
+    state[field] = result;
+    state.auditDataCache = null;
+  }
+}
+async function loadPageData() {
+  if (!state.currentProject || !['materials','materials-dashboard','projects'].includes(state.page)) return;
+  const projectCode = state.currentProject;
+  if (state.loadedProject !== projectCode) resetProjectData(projectCode);
+  const fields = state.page === 'materials'
+    ? [['data','materials'], ['btpData','btp'], ['progressData','progress']]
+    : state.page === 'materials-dashboard' ? [['btpData','btp']] : [['progressData','progress']];
+  await Promise.all(fields.map(([field, endpoint]) => loadProjectDataField(projectCode, field, endpoint)));
 }
 async function renderPage() {
+  const generation = ++renderGeneration;
   const page = document.querySelector('#page'); if (!page) return;
   page.innerHTML = '<div class="loading-state"><span class="spinner"></span><p>Đang tải dữ liệu…</p></div>';
   try {
@@ -857,13 +979,17 @@ async function renderPage() {
     else if (['materials','materials-dashboard','projects'].includes(state.page)) {
       if (!state.currentProject && state.projects.length) state.currentProject = state.projects[0].code;
       await loadPageData();
+      if (generation !== renderGeneration) return;
       page.innerHTML = state.page === 'materials' ? materialsAuditPage() : state.page === 'materials-dashboard' ? materialDashboardPage() : projectsPage();
     } else {
       await refreshPlFiles();
+      if (generation !== renderGeneration) return;
       page.innerHTML = adminPage();
     }
     bindPage();
-  } catch (error) { page.innerHTML = `<div class="notice error">${esc(error.message)}</div>`; }
+  } catch (error) {
+    if (generation === renderGeneration) page.innerHTML = `<div class="notice error">${esc(error.message)}</div>`;
+  }
 }
 async function navigate() {
   if (ADMIN_MODE) {

@@ -238,6 +238,24 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(app, /\[\.\.\.state\.projects\]\.sort\(\(left, right\) => String\(left\.code\)\.localeCompare\(String\(right\.code\)/);
 });
 
+test('workspace defers the Excel parser and only requests data needed by the selected tab', async () => {
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync('public/app.js', 'utf8');
+  const index = readFileSync('public/index.html', 'utf8');
+  const admin = readFileSync('public/admin.html', 'utf8');
+  const styles = readFileSync('public/workspace-enhancements.css', 'utf8');
+  assert.doesNotMatch(index, /xlsx\.full\.min\.js/);
+  assert.doesNotMatch(admin, /xlsx\.full\.min\.js/);
+  assert.match(app, /function loadSpreadsheetLibrary\(\)/);
+  assert.match(app, /state\.page === 'materials-dashboard' \? \[\['btpData','btp'\]\] : \[\['progressData','progress'\]\]/);
+  assert.match(app, /state\.page === 'materials'\s*\? \[\['data','materials'\], \['btpData','btp'\], \['progressData','progress'\]\]/);
+  assert.match(app, /if \(state\[field\]\) return/);
+  assert.match(app, /id="importFileProgress" aria-live="polite"/);
+  assert.match(app, /setImportProgress\(fileIndex, 'complete'/);
+  assert.match(app, /setImportProgress\(fileIndex, 'error'/);
+  assert.match(styles, /\.import-file-progress-item\.working \.import-file-progress-indicator[\s\S]*animation:spin/);
+});
+
 test('material dashboard charts cumulative receipt totals and received/shortage by delivery unit', () => {
   const html = renderMaterialDashboard([
     { unit:'DVG-A', design_quantity:3, received:1, remaining:2, daily_progress:'01/09/2026: 1; 02/09/2026: 1' },

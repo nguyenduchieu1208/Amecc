@@ -91,3 +91,18 @@
   .sheet-multi-menu { width:min(420px,calc(100vw - 26px)); }
   .bom-search-match-line { grid-template-columns:145px 85px 60px 110px 95px 75px 75px 75px 160px 80px 100px 170px; }
 }
+.import-file-progress { grid-column:1/-1; min-width:0; padding:12px 13px; border:1px solid var(--line); border-radius:8px; background:var(--soft); }
+.import-file-progress[hidden] { display:none; }
+.import-file-progress-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:7px; color:var(--ink); font-size:10px; }
+.import-file-progress-head span { color:var(--muted); font-size:9px; }
+.import-file-progress-list { display:grid; gap:2px; max-height:240px; overflow:auto; margin:0; padding:0; list-style:none; }
+.import-file-progress-item { display:grid; grid-template-columns:19px minmax(0,1fr); align-items:center; gap:9px; min-width:0; padding:7px 5px; border-top:1px solid var(--line); }
+.import-file-progress-indicator { width:17px; height:17px; display:grid; place-items:center; border-radius:50%; color:var(--muted); font-size:15px; line-height:1; }
+.import-file-progress-item.working .import-file-progress-indicator { width:15px; height:15px; margin:1px; border:2px solid var(--line); border-top-color:#2673d5; color:transparent; animation:spin .8s linear infinite; }
+.import-file-progress-item.complete .import-file-progress-indicator { background:#dcf5e9; color:#08744f; font-size:11px; font-weight:800; }
+.import-file-progress-item.error .import-file-progress-indicator { background:#ffe5e5; color:#b5473c; font-size:11px; font-weight:800; }
+.import-file-progress-copy { display:grid; gap:3px; min-width:0; }
+.import-file-progress-copy strong { overflow:hidden; color:var(--ink); font-size:9px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
+.import-file-progress-copy small { color:var(--muted); font-size:8px; line-height:1.4; overflow-wrap:anywhere; }
+.import-file-progress-item.error .import-file-progress-copy small { color:#b5473c; }
+@media(max-width:580px) { .import-file-progress { padding:10px; } .import-file-progress-head { align-items:flex-start; } .import-file-progress-copy strong { white-space:normal; } }

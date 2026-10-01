@@ -224,6 +224,7 @@ test('project data is public while PL file deletion is restricted to admins and 
       'migrations/0003_material_delivery_and_issue_dates.sql',
       'migrations/0004_btp_materials.sql',
       'migrations/0005_btp_unit_weight.sql',
+      'migrations/0006_btp_bom_details.sql',
     ]) database.exec(readFileSync(migration, 'utf8'));
 
     database.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
@@ -256,12 +257,20 @@ test('project data is public while PL file deletion is restricted to admins and 
     assert.deepEqual((await projects.json()).projects.map((project) => project.code), ['A290'], 'empty project metadata should not show in the project selector');
     const publicMaterial = await worker.fetch(new Request('https://amecc.test/api/projects/A290/materials'), env);
     assert.equal(publicMaterial.status, 200);
-    assert.equal((await publicMaterial.json()).rows.length, 2);
+    const publicMaterialData = await publicMaterial.json();
+    assert.equal(publicMaterialData.rows.length, 2);
+    assert.ok(publicMaterialData.rows.some((row) => row.drawing === 'OLD'));
+    assert.equal(Object.hasOwn(publicMaterialData.rows[0], 'id'), false, 'API omits database metadata the workspace does not display');
     const publicBtp = await worker.fetch(new Request('https://amecc.test/api/projects/A290/btp'), env);
     assert.equal(publicBtp.status, 200);
+    const publicBtpData = await publicBtp.json();
+    assert.ok(publicBtpData.rows.some((row) => row.part_no === 'BTP-OLD'));
+    assert.equal(Object.hasOwn(publicBtpData.rows[0], 'project_code'), false);
     const publicProgress = await worker.fetch(new Request('https://amecc.test/api/projects/A290/progress'), env);
     assert.equal(publicProgress.status, 200);
-    assert.equal((await publicProgress.json()).rows[0].drawing, 'QLDA-KEEP');
+    const publicProgressData = await publicProgress.json();
+    assert.equal(publicProgressData.rows[0].drawing, 'QLDA-KEEP');
+    assert.equal(Object.hasOwn(publicProgressData.rows[0], 'id'), false);
 
     const filesWithoutAdmin = await worker.fetch(new Request('https://amecc.test/api/admin/pl-files'), env);
     assert.equal(filesWithoutAdmin.status, 401);

@@ -27,6 +27,9 @@ const PROGRESS_COLUMNS = [
   'trial_assembly_weight', 'acceptance_date', 'acceptance_qty', 'acceptance_weight',
   'handover_date', 'handover_qty', 'handover_weight', 'receiver', 'record_no',
 ];
+const MATERIAL_READ_COLUMNS = MATERIAL_COLUMNS.filter((column) => column !== 'project_code').join(', ');
+const BTP_READ_COLUMNS = BTP_COLUMNS.filter((column) => column !== 'project_code').join(', ');
+const PROGRESS_READ_COLUMNS = PROGRESS_COLUMNS.filter((column) => column !== 'project_code').join(', ');
 const QLDA_FIELDS = {
   2: 'project_code', 5: 'item', 6: 'mh', 7: 'wo_date', 8: 'product_type',
   9: 'classification', 10: 'allocation', 11: 'drawing', 12: 'part_no', 13: 'size',
@@ -808,19 +811,19 @@ async function route(request, env) {
   const materialMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/materials$/);
   if (request.method === 'GET' && materialMatch) {
     const projectCode = safeProjectCode(materialMatch[1]);
-    const { results } = await env.DB.prepare('SELECT * FROM materials WHERE project_code = ? ORDER BY source_file, source_sheet, source_row').bind(projectCode).all();
+    const { results } = await env.DB.prepare(`SELECT ${MATERIAL_READ_COLUMNS} FROM materials WHERE project_code = ? ORDER BY source_file, source_sheet, source_row`).bind(projectCode).all();
     return json({ project_code: projectCode, rows: results });
   }
   const btpMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/btp$/);
   if (request.method === 'GET' && btpMatch) {
     const projectCode = safeProjectCode(btpMatch[1]);
-    const { results } = await env.DB.prepare('SELECT * FROM btp_materials WHERE project_code = ? ORDER BY source_file, source_sheet, source_row').bind(projectCode).all();
+    const { results } = await env.DB.prepare(`SELECT ${BTP_READ_COLUMNS} FROM btp_materials WHERE project_code = ? ORDER BY source_file, source_sheet, source_row`).bind(projectCode).all();
     return json({ project_code: projectCode, rows: results });
   }
   const progressMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/progress$/);
   if (request.method === 'GET' && progressMatch) {
     const projectCode = safeProjectCode(progressMatch[1]);
-    const { results } = await env.DB.prepare('SELECT * FROM project_progress WHERE project_code = ? ORDER BY source_file, source_row').bind(projectCode).all();
+    const { results } = await env.DB.prepare(`SELECT ${PROGRESS_READ_COLUMNS} FROM project_progress WHERE project_code = ? ORDER BY source_file, source_row`).bind(projectCode).all();
     return json({ project_code: projectCode, rows: results });
   }
   throw new HttpError(404, 'Không tìm thấy API.');
