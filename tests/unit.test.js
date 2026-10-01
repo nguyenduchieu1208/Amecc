@@ -445,6 +445,7 @@ test('PL staging chunks stay within D1 parameter limit and commit is atomic', as
   assert.match(btpDetailsMigration, /ALTER TABLE btp_materials ADD COLUMN material TEXT/);
   assert.match(btpDetailsMigration, /ALTER TABLE btp_materials ADD COLUMN total_weight REAL/);
   assert.equal(__test__.BTP_IMPORT_COLUMNS.length, 18);
+  assert.match(source, /INSERT INTO \$\{stagingTable\} \(\$\{stagingColumns\.join\(', '\)\}\) VALUES \$\{valueGroups\}/);
   assert.match(source, /UPDATE material_imports SET committed = 1, commit_token = \?/);
   assert.match(source, /DELETE FROM materials WHERE project_code = \? AND EXISTS/);
   assert.match(source, /INSERT INTO materials \(\$\{insertColumns\}\) SELECT \?, \?, source_sheet, source_row/);

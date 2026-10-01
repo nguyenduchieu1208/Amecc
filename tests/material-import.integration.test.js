@@ -243,6 +243,8 @@ test('project data is public while PL file deletion is restricted to admins and 
       VALUES ('A290', 'OldPL.xlsx', 'BTP-1', 1, 'BTP-OLD'), ('A290', 'KeepPL.xlsx', 'BTP-1', 2, 'BTP-KEEP')`).run();
     database.prepare(`INSERT INTO project_progress (project_code, source_file, source_row, drawing)
       VALUES ('A290', 'A290.xlsx', 1, 'QLDA-KEEP')`).run();
+    database.prepare('INSERT INTO projects (code, name, source_file) VALUES (?, ?, ?)')
+      .run('EMPTY', 'EMPTY', 'EMPTY.xlsx');
     for (const [id, file, category] of [['old-pl-run', 'OldPL.xlsx', 'materials'], ['old-btp-run', 'OldPL.xlsx', 'btp']]) {
       database.prepare('INSERT INTO import_runs (id, project_code, category, source_file, imported_rows) VALUES (?, ?, ?, ?, 1)')
         .run(id, 'A290', category, file);
@@ -251,7 +253,7 @@ test('project data is public while PL file deletion is restricted to admins and 
 
     const projects = await worker.fetch(new Request('https://amecc.test/api/projects'), env);
     assert.equal(projects.status, 200);
-    assert.equal((await projects.json()).projects[0].code, 'A290');
+    assert.deepEqual((await projects.json()).projects.map((project) => project.code), ['A290'], 'empty project metadata should not show in the project selector');
     const publicMaterial = await worker.fetch(new Request('https://amecc.test/api/projects/A290/materials'), env);
     assert.equal(publicMaterial.status, 200);
     assert.equal((await publicMaterial.json()).rows.length, 2);
@@ -295,6 +297,16 @@ test('project data is public while PL file deletion is restricted to admins and 
       headers: { authorization: `Bearer ${adminToken}` },
     }), env);
     assert.deepEqual((await refreshedFiles.json()).files.map((file) => file.source_file), ['KeepPL.xlsx']);
+
+    database.prepare('INSERT INTO projects (code, name, source_file) VALUES (?, ?, ?)').run('VOID', 'VOID', 'VOIDPL.xlsx');
+    database.prepare(`INSERT INTO materials (project_code, source_file, source_sheet, source_row, drawing, status)
+      VALUES ('VOID', 'VOIDPL.xlsx', 'PL', 1, 'VOID-ROW', 'old')`).run();
+    const deleteLastProjectFile = await worker.fetch(new Request('https://amecc.test/api/admin/pl-files', {
+      method: 'DELETE', headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ project_code: 'VOID', filename: 'VOIDPL.xlsx' }),
+    }), env);
+    assert.equal(deleteLastProjectFile.status, 200);
+    assert.equal(database.prepare("SELECT code FROM projects WHERE code = 'VOID'").get(), undefined, 'deleting the last project data should remove project metadata');
 
     database.prepare(`INSERT INTO materials (project_code, source_file, source_sheet, source_row, drawing, status)
       VALUES ('A290', 'A290PL.xlsx', 'PL', 3, 'A290-PL', 'ok')`).run();

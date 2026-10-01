@@ -357,7 +357,11 @@ async function listProjects(env) {
       (SELECT COUNT(*) FROM materials m WHERE m.project_code = p.code) AS material_rows,
       (SELECT COUNT(*) FROM btp_materials b WHERE b.project_code = p.code) AS btp_rows,
       (SELECT COUNT(*) FROM project_progress q WHERE q.project_code = p.code) AS progress_rows
-     FROM projects p ORDER BY p.code`
+     FROM projects p
+     WHERE EXISTS (SELECT 1 FROM materials m WHERE m.project_code = p.code)
+        OR EXISTS (SELECT 1 FROM btp_materials b WHERE b.project_code = p.code)
+        OR EXISTS (SELECT 1 FROM project_progress q WHERE q.project_code = p.code)
+     ORDER BY p.code`
   ).all();
   return results;
 }
@@ -396,6 +400,15 @@ function projectSourceFallbackStatement(env, projectCode, filename) {
   ).bind(projectCode, projectCode, projectCode, projectCode, filename, projectCode, filename, projectCode, filename);
 }
 
+function pruneEmptyProjectStatement(env, projectCode) {
+  return env.DB.prepare(
+    `DELETE FROM projects WHERE code = ?
+      AND NOT EXISTS (SELECT 1 FROM materials WHERE project_code = ?)
+      AND NOT EXISTS (SELECT 1 FROM btp_materials WHERE project_code = ?)
+      AND NOT EXISTS (SELECT 1 FROM project_progress WHERE project_code = ?)`
+  ).bind(projectCode, projectCode, projectCode, projectCode);
+}
+
 async function deletePlFile(request, env) {
   await requireAdmin(request, env);
   const body = await request.json().catch(() => null);
@@ -408,6 +421,7 @@ async function deletePlFile(request, env) {
     env.DB.prepare('DELETE FROM btp_materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
     env.DB.prepare("DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category IN ('materials', 'btp')").bind(projectCode, filename),
     projectSourceFallbackStatement(env, projectCode, filename),
+    pruneEmptyProjectStatement(env, projectCode),
   ]);
   const deletedRows = results.slice(0, 2).reduce((total, result) => total + Number(result.meta?.changes || 0), 0);
   if (!deletedRows) throw new HttpError(404, 'Không tìm thấy file PL/BTP để xóa.');
@@ -633,6 +647,7 @@ async function importMaterials(request, env) {
       env.DB.prepare(`DELETE FROM ${table} WHERE project_code = ? AND source_file = ? COLLATE NOCASE`).bind(projectCode, filename),
       env.DB.prepare('DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category = ?').bind(projectCode, filename, category),
       projectSourceFallbackStatement(env, projectCode, filename),
+      pruneEmptyProjectStatement(env, projectCode),
     ]);
     return json({ project_code: projectCode, category, source_file: filename, deleted_rows: Number(results[0]?.meta?.changes || 0), cleared: true });
   }
@@ -677,8 +692,8 @@ async function importMaterials(request, env) {
         startRow + offset + index,
         ...importColumns.map((column) => row[column] ?? null),
       ]);
-      const rowSelects = group.map(() => `SELECT ${stagingColumns.map(() => '?').join(', ')}`).join(' UNION ALL ');
-      statements.push(env.DB.prepare(`INSERT INTO ${stagingTable} (${stagingColumns.join(', ')}) SELECT * FROM (${rowSelects}) AS incoming_rows`)
+      const valueGroups = group.map(() => `(${stagingColumns.map(() => '?').join(', ')})`).join(', ');
+      statements.push(env.DB.prepare(`INSERT INTO ${stagingTable} (${stagingColumns.join(', ')}) VALUES ${valueGroups}`)
         .bind(...values));
     }
     statements.push(env.DB.prepare('UPDATE material_imports SET next_row = ? WHERE id = ? AND next_row = ? AND committed = 0')
