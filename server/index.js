@@ -71,7 +71,7 @@ function columnsFor(database, table) {
   return new Set(database.prepare(`PRAGMA table_info("${table}")`).all().map((column) => column.name));
 }
 
-function hasCurrentSchema(database) {
+function hasCurrentSchema(database, includeProjectImportStaging = true) {
   const tables = new Set(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
   const requiredColumns = {
     projects: ['code', 'name', 'source_file'],
@@ -84,6 +84,10 @@ function hasCurrentSchema(database) {
     project_progress: ['item', 'receiver', 'record_no'],
     import_runs: ['category', 'imported_rows'],
   };
+  if (includeProjectImportStaging) {
+    requiredColumns.project_imports = ['expected_rows', 'next_row', 'committed', 'expires_at'];
+    requiredColumns.project_progress_import_rows = ['import_id', 'row_index', 'source_row', 'record_no'];
+  }
   return Object.entries(requiredColumns).every(([table, columns]) =>
     tables.has(table) && columns.every((column) => columnsFor(database, table).has(column))
   );
@@ -108,6 +112,16 @@ export function applyMigrations(database, migrationsDirectory = resolve(root, 'm
   }
 
   const applied = new Set(database.prepare('SELECT filename FROM _amecc_migrations').all().map((row) => row.filename));
+  if (!applied.size && hasCurrentSchema(database, false)) {
+    const record = database.prepare('INSERT OR IGNORE INTO _amecc_migrations (filename) VALUES (?)');
+    const markPreviousSchema = database.transaction(() => {
+      for (const filename of migrationFiles) {
+        if (filename !== '0007_project_import_staging.sql') record.run(filename);
+      }
+    });
+    markPreviousSchema();
+    for (const filename of migrationFiles) if (filename !== '0007_project_import_staging.sql') applied.add(filename);
+  }
   for (const filename of migrationFiles) {
     if (applied.has(filename)) continue;
     const sql = readFileSync(resolve(migrationsDirectory, filename), 'utf8');

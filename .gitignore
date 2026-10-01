@@ -6,6 +6,7 @@ __pycache__/
 node_modules/
 data/
 .wrangler/
+supabase/functions/.env
 *.sqlite
 *.db
 

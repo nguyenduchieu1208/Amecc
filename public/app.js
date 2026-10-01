@@ -1,4 +1,5 @@
 const API_BASE = String(window.AMECC_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
+const API_KEY = String(window.AMECC_CONFIG?.apiKey || '');
 const ADMIN_MODE = /(?:^|\/)admin\.html$/.test(window.location.pathname);
 import { MAX_MATERIAL_FILE_BYTES, MAX_MATERIAL_FILE_MB, projectCodeFromFilename, readMaterialWorkbook } from './material-import.js';
 import { getBtpShortageQuantity, getBtpShortageWeight, highlightMatch } from './material-search.js';
@@ -6,6 +7,7 @@ import { formatMaterialDate } from './material-display.js';
 import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortage-export.js';
 import { renderMaterialDashboard } from './material-dashboard.js';
 import { buildMaterialAuditRows, hasBtpIdentity, isPurchasingMaterialSheet, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
+import { readProjectWorkbook } from './project-import.js';
 const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
@@ -43,8 +45,9 @@ function icon(name) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.overview}</svg>`;
 }
 async function api(path, options = {}) {
-  if (!API_BASE || API_BASE.includes('REPLACE_WITH')) throw new Error('Chưa cấu hình địa chỉ Cloudflare Worker trong public/config.js.');
+  if (!API_BASE || API_BASE.includes('REPLACE_WITH')) throw new Error('Chưa cấu hình địa chỉ API trong public/config.js.');
   const headers = new Headers(options.headers || {});
+  if (API_KEY) headers.set('apikey', API_KEY);
   const token = sessionStorage.getItem('amecc-session-token');
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const response = await fetch(`${API_BASE}${path}`, { credentials: 'omit', ...options, headers });
@@ -746,8 +749,53 @@ function bindPage() {
         const files = [...form.querySelector('[name="file"]').files];
         if (files.length !== 1) throw new Error('QLDA chỉ hỗ trợ chọn một file mỗi lần.');
         if (files[0].size === 0 || files[0].size > 10 * 1024 * 1024) throw new Error('File QLDA phải có dung lượng từ 1 byte đến 10 MB.');
-        projectCodes.add(projectCodeFromFilename(files[0].name, 'projects'));
-        result = await api(`/api/admin/import/${endpoint}`,{method:'POST',body:data});
+        const file = files[0];
+        const projectCode = projectCodeFromFilename(file.name, 'projects');
+        projectCodes.add(projectCode);
+        const xlsx = window.XLSX;
+        if (!xlsx) throw new Error('Không tải được thư viện đọc Excel; hãy tải lại trang rồi thử lại.');
+        output.textContent = `Đang đọc sheet Progress trong ${file.name}…`;
+        const records = await readProjectWorkbook(file, xlsx);
+        const importSession = await api('/api/admin/import/projects', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'begin', filename: file.name, project_code: projectCode, expected_rows: records.length }),
+        });
+        try {
+          let start = 0;
+          while (start < records.length) {
+            let rowCount = Math.min(importSession.chunk_size, records.length - start);
+            let chunkRecords = records.slice(start, start + rowCount);
+            let chunkBody = JSON.stringify({ action: 'chunk', import_id: importSession.import_id, start_row: start, records: chunkRecords });
+            while (new TextEncoder().encode(chunkBody).byteLength > 512 * 1024 && rowCount > 1) {
+              rowCount = Math.max(1, Math.floor(rowCount / 2));
+              chunkRecords = records.slice(start, start + rowCount);
+              chunkBody = JSON.stringify({ action: 'chunk', import_id: importSession.import_id, start_row: start, records: chunkRecords });
+            }
+            if (new TextEncoder().encode(chunkBody).byteLength > 512 * 1024) {
+              throw new Error(`Dòng QLDA ${start + 1} quá lớn để tải an toàn; dữ liệu hiện hành chưa bị thay thế.`);
+            }
+            await api('/api/admin/import/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: chunkBody });
+            start += chunkRecords.length;
+            output.textContent = `QLDA · ${file.name}: ${start.toLocaleString('vi-VN')}/${records.length.toLocaleString('vi-VN')} dòng…`;
+          }
+          const commitRequest = {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'commit', import_id: importSession.import_id }),
+          };
+          try { result = await api('/api/admin/import/projects', commitRequest); }
+          catch (commitError) {
+            try { result = await api('/api/admin/import/projects', commitRequest); }
+            catch { throw commitError; }
+          }
+        } catch (error) {
+          try {
+            await api('/api/admin/import/projects', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ action: 'abort', import_id: importSession.import_id }),
+            });
+          } catch { /* Expired imports are cleaned up automatically. */ }
+          throw error;
+        }
       }
       if (endpoint === 'materials' && failedMaterialFiles.length) {
         const failedSummary = failedMaterialFiles.map(({ filename, message }) => `• ${filename}: ${message}`).join('\n');
@@ -843,7 +891,7 @@ async function initializeWorkspace() {
 }
 async function start() {
   if (!API_BASE || API_BASE.includes('REPLACE_WITH')) {
-    app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><h1>Chưa cấu hình dữ liệu</h1><p>Cần cấu hình Worker URL trong public/config.js để tải dữ liệu dự án.</p><a class="button primary" href="./admin.html">Trang quản trị</a></section></main>`;
+    app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><h1>Chưa cấu hình dữ liệu</h1><p>Cần cấu hình địa chỉ API trong public/config.js để tải dữ liệu dự án.</p><a class="button primary" href="./admin.html">Trang quản trị</a></section></main>`;
     return;
   }
   if (ADMIN_MODE) {
