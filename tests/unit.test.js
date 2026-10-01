@@ -165,6 +165,9 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(enhancements, /\.bom-btp-table tbody tr\.search-match-row td/);
   assert.match(enhancements, /\.bom-btp-group\[open\] \.bom-search-match-preview-wrap \{ display:none; \}/);
   assert.match(enhancements, /\.sheet-check-option input \{ grid-column:1; grid-row:1\/3;/);
+  assert.match(enhancements, /\.material-audit-controls \{ position:static; top:auto; z-index:auto;/);
+  assert.match(enhancements, /grid-template-areas:"search search" "project sheet" "date unit" "status export"/);
+  assert.match(enhancements, /\.audit-search input \{ min-height:44px; font-size:16px!important/);
   assert.match(app, /<details class="bom-btp-group">/);
   assert.match(app, /<summary class="bom-btp-group-summary">[\s\S]*<div class="bom-btp-table-wrap"><table class="bom-btp-table">/);
   assert.match(app, /event\.replace\(\/:\\s\*\/, ': '\)/);
@@ -179,6 +182,10 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.doesNotMatch(app, /href="#btp(?:-dates)?"/);
   assert.match(app, /<input type="checkbox" data-material-sheet/);
   assert.match(auditPage, /type="date" id="materialReceiptDateFilter"[\s\S]*id="materialStatusFilter"[\s\S]*id="materialSearch"[\s\S]*id="exportBtpShortage"/);
+  assert.match(auditPage, /id="materialSearch" type="search" inputmode="search"/);
+  assert.match(app, /const rerenderAuditResults = \(\) => \{[\s\S]*for \(const selector of \['\.audit-stats','\.audit-table-heading','\.bom-btp-groups','\.btp-pagination'\]\)[\s\S]*bindAuditPagination\(\)/);
+  assert.match(app, /state\.materialSearch = event\.currentTarget\.value;[\s\S]*rerenderAuditResults\(\);/);
+  assert.doesNotMatch(app, /rerenderAudit\(\{ focusSearch:true/);
   assert.match(auditPage, /Đơn vị giao[\s\S]*id="materialUnitFilter"/);
   assert.match(auditPage, /deliveryUnits\.map\(\(unit\)/);
   assert.match(app, /state\.materialUnitFilter && String\(row\.btp\?\.unit/);

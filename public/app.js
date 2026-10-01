@@ -353,7 +353,7 @@ function materialsAuditPage() {
         <label class="filter-label">Ngày nhận<div class="date-filter-control"><input type="date" id="materialReceiptDateFilter" value="${esc(state.materialReceiptDateFilter)}" aria-label="Chọn hoặc nhập ngày nhận" title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp">${state.materialReceiptDateFilter ? '<button class="date-filter-clear" id="clearMaterialReceiptDate" type="button" title="Xem tất cả ngày">Xóa</button>' : ''}</div></label>
         <label class="filter-label">Đơn vị giao<select id="materialUnitFilter"><option value="" ${state.materialUnitFilter ? '' : 'selected'}>Tất cả đơn vị</option>${deliveryUnits.map((unit) => `<option value="${esc(unit)}" ${state.materialUnitFilter === unit ? 'selected' : ''}>${esc(unit)}</option>`).join('')}</select></label>
         <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
-        <label class="search-box audit-search">${icon('search')}<input id="materialSearch" placeholder="Tìm mã BTP, chủng loại, DVG, size, ghi chú…" value="${esc(state.materialSearch)}"></label>
+        <label class="search-box audit-search">${icon('search')}<input id="materialSearch" type="search" inputmode="search" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="Tìm mã BTP, chủng loại, DVG, size, ghi chú…" value="${esc(state.materialSearch)}"></label>
         <button class="button primary audit-export-button" id="exportBtpShortage" type="button" ${shortageCount ? '' : 'disabled'}>${icon('download')}<span>Xuất List thiếu</span></button>
       </div>
       <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
@@ -362,7 +362,7 @@ function materialsAuditPage() {
     <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${allGroups.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, allGroups.length)} / ${fmt(allGroups.length)} cấu kiện` : '0 cấu kiện'}</span></div>
     <div class="bom-btp-groups">${pageGroups.map(auditBomGroupMarkup).join('') || '<div class="empty-state"><strong>Không có dòng phù hợp</strong><p>Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</p></div>'}</div>
     <div class="btp-pagination"><span>${fmt(allGroups.length)} cấu kiện · ${fmt(visibleRows.length)} dòng BTP phù hợp</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
-    ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;
+    ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p id="auditShortageNote" class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;
 }
 function materialDashboardPage() {
   const options = auditSheetOptions();
@@ -473,7 +473,7 @@ function bindPage() {
     state.materialDashboardMetric = 'quantity';
     await loadPageData(); renderPage();
   });
-  const rerenderAudit = ({ keepDropdown = false, focusSearch = false, cursor = null } = {}) => {
+  const rerenderAudit = ({ keepDropdown = false } = {}) => {
     const page = document.querySelector('#page');
     const position = window.scrollY;
     const dropdownOpen = keepDropdown && document.querySelector('#materialSheetDropdown')?.open;
@@ -482,17 +482,42 @@ function bindPage() {
     bindPage();
     const dropdown = document.querySelector('#materialSheetDropdown');
     if (dropdownOpen && dropdown) dropdown.open = true;
-    if (focusSearch) {
-      const search = document.querySelector('#materialSearch');
-      search?.focus();
-      if (cursor !== null) search?.setSelectionRange(cursor, cursor);
-    }
     window.scrollTo(0,position);
+  };
+  const bindAuditPagination = () => {
+    document.querySelector('#auditPrevPage')?.addEventListener('click', () => {
+      state.materialPageIndex = Math.max(0, state.materialPageIndex - 1);
+      rerenderAudit();
+    });
+    document.querySelector('#auditNextPage')?.addEventListener('click', () => {
+      state.materialPageIndex += 1;
+      rerenderAudit();
+    });
+  };
+  const rerenderAuditResults = () => {
+    const page = document.querySelector('#page');
+    if (!page) return;
+    const rendered = document.createElement('div');
+    rendered.innerHTML = materialsAuditPage();
+    for (const selector of ['.audit-stats','.audit-table-heading','.bom-btp-groups','.btp-pagination']) {
+      const current = page.querySelector(selector);
+      const next = rendered.querySelector(selector);
+      if (current && next) current.innerHTML = next.innerHTML;
+    }
+    const exportButton = page.querySelector('#exportBtpShortage');
+    const nextExportButton = rendered.querySelector('#exportBtpShortage');
+    if (exportButton && nextExportButton) exportButton.disabled = nextExportButton.disabled;
+    const shortageNote = page.querySelector('#auditShortageNote');
+    const nextShortageNote = rendered.querySelector('#auditShortageNote');
+    if (shortageNote && nextShortageNote) shortageNote.replaceWith(nextShortageNote);
+    else if (shortageNote) shortageNote.remove();
+    else if (nextShortageNote) page.append(nextShortageNote);
+    bindAuditPagination();
   };
   document.querySelector('#materialSearch')?.addEventListener('input', (event) => {
     state.materialSearch = event.currentTarget.value;
     state.materialPageIndex = 0;
-    rerenderAudit({ focusSearch:true, cursor:event.currentTarget.selectionStart });
+    rerenderAuditResults();
   });
   document.querySelectorAll('[data-material-sheet]')?.forEach((checkbox) => checkbox.addEventListener('change', () => {
     const checked = [...document.querySelectorAll('[data-material-sheet]:checked')].map((item) => item.value);
@@ -530,14 +555,7 @@ function bindPage() {
     state.materialPageIndex = 0;
     rerenderAudit();
   });
-  document.querySelector('#auditPrevPage')?.addEventListener('click', () => {
-    state.materialPageIndex = Math.max(0, state.materialPageIndex - 1);
-    rerenderAudit();
-  });
-  document.querySelector('#auditNextPage')?.addEventListener('click', () => {
-    state.materialPageIndex += 1;
-    rerenderAudit();
-  });
+  bindAuditPagination();
   const rerenderMaterialDashboard = () => {
     const page = document.querySelector('#page');
     const position = window.scrollY;
