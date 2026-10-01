@@ -1,5 +1,8 @@
 import { hasBtpIdentity, isPurchasingMaterialSheet } from './material-linkage.js';
 
+export const MAX_MATERIAL_FILE_BYTES = 20 * 1024 * 1024;
+export const MAX_MATERIAL_FILE_MB = 20;
+
 const MATERIAL_FIELDS = {
   2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 7: 'size', 12: 'quantity',
   14: 'weight', 15: 'scope', 20: 'received', 21: 'remaining',
@@ -336,11 +339,29 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
 }
 
 export async function readMaterialWorkbook(file, projectCode, xlsx) {
-  if (!(file instanceof Blob) || file.size === 0 || file.size > 10 * 1024 * 1024
-    || !/^[\w.-]+PL\.xlsx$/i.test(file.name)) {
-    throw new Error('Chọn file .xlsx tên kết thúc bằng PL.xlsx, dung lượng tối đa 10 MB.');
+  if (!(file instanceof Blob)) throw new Error('Không đọc được file Excel đã chọn.');
+  if (file.size === 0) throw new Error(`File ${file.name || ''} đang trống.`.trim());
+  if (file.size > MAX_MATERIAL_FILE_BYTES) {
+    throw new Error(`File ${file.name || ''} vượt quá giới hạn ${MAX_MATERIAL_FILE_MB} MB.`.trim());
+  }
+  if (!/^[\w.-]+PL\.xlsx$/i.test(file.name || '')) {
+    throw new Error(`Tên file ${file.name || ''} phải kết thúc bằng PL.xlsx, ví dụ M304PL.xlsx.`.trim());
   }
   // Keep Excel dates as serial numbers so timezone settings cannot shift receipt dates by one day.
-  const workbook = xlsx.read(await file.arrayBuffer(), { type: 'array', cellDates: false, bookVBA: false });
+  let bytes;
+  let readError;
+  for (const source of [file, file.slice(0, file.size)]) {
+    try {
+      const candidateBytes = await source.arrayBuffer();
+      if (candidateBytes.byteLength !== file.size) throw new Error('Kích thước dữ liệu đọc được không khớp với file.');
+      bytes = candidateBytes;
+      break;
+    } catch (error) { readError = error; }
+  }
+  if (!bytes) {
+    const readDetail = [readError?.name, readError?.message].filter(Boolean).join(': ') || 'lỗi đọc file';
+    throw new Error(`Không đọc được file ${file.name}. File có thể đã bị di chuyển, đang đồng bộ hoặc bị khóa; hãy chọn lại file này rồi thử nhập lại. Dữ liệu hiện có của file này chưa bị thay đổi. Chi tiết: ${readDetail}`);
+  }
+  const workbook = xlsx.read(bytes, { type: 'array', cellDates: false, bookVBA: false });
   return parseMaterialWorkbook(workbook, file.name, projectCode, xlsx);
 }

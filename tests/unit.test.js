@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { File } from 'node:buffer';
 import * as xlsx from 'xlsx';
 import { __test__ } from '../worker/index.js';
-import { BTP_COLUMNS, parseMaterialWorkbook } from '../public/material-import.js';
+import { BTP_COLUMNS, MAX_MATERIAL_FILE_BYTES, MAX_MATERIAL_FILE_MB, parseMaterialWorkbook, projectCodeFromFilename, readMaterialWorkbook } from '../public/material-import.js';
 import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch, summarizeBtpShortages } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 import { renderMaterialDashboard } from '../public/material-dashboard.js';
@@ -17,6 +18,9 @@ test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(__test__.safeProjectCode(' a290 '), 'A290');
   assert.throws(() => __test__.safeProjectCode('../private'), /không hợp lệ/);
   assert.throws(() => __test__.safeProjectCode('A'), /không hợp lệ/);
+  assert.equal(projectCodeFromFilename('M304PL.xlsx', 'materials'), 'M304');
+  assert.equal(MAX_MATERIAL_FILE_MB, 20);
+  assert.equal(MAX_MATERIAL_FILE_BYTES, 20 * 1024 * 1024);
 });
 
 test('QLDA mapping exposes selected fields and excludes hidden source columns', () => {
@@ -453,6 +457,17 @@ test('actual A290 workbook parses to a compact approved-field JSON payload', { s
   assert.ok(payload.btp_records.every((row) => !Object.hasOwn(row, 'issue_date') && !Object.hasOwn(row, 'date_issue')));
   assert.ok(Buffer.byteLength(JSON.stringify(payload)) < 10 * 1024 * 1024);
   assert.equal(Object.hasOwn(payload.records[0], 'project_code'), false);
+});
+
+test('actual M304PL workbook exceeds the old 10 MB limit but is readable under the new material upload limit', { skip: !existsSync('Data/M304PL.xlsx') }, async () => {
+  const file = new File([readFileSync('Data/M304PL.xlsx')], 'M304PL.xlsx');
+  assert.ok(file.size > 10 * 1024 * 1024);
+  assert.ok(file.size < MAX_MATERIAL_FILE_BYTES);
+  Object.defineProperty(file, 'arrayBuffer', { value: async () => { throw new DOMException('transient file read failure', 'NotReadableError'); } });
+  const payload = await readMaterialWorkbook(file, 'M304', xlsx);
+  assert.equal(payload.project_code, 'M304');
+  assert.ok(payload.records.length > 0);
+  assert.ok(payload.btp_records.length > 0);
 });
 
 test('material audit links BTP child codes to BOM across separate source files and joins QLDA conservatively', () => {

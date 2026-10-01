@@ -176,9 +176,10 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     });
     assert.equal(btpBegin.status, 201);
     const btpSession = await btpBegin.json();
+    const btpRecord = { source_sheet:actualBtpRow.source_sheet, source_row:actualBtpRow.source_row, part_no:actualBtpRow.part_no, material_type:actualBtpRow.material_type, description:actualBtpRow.description, material:actualBtpRow.material, unit:actualBtpRow.unit, size:actualBtpRow.size, length_mm:actualBtpRow.length_mm, unit_weight:actualBtpRow.unit_weight, total_weight:actualBtpRow.total_weight, design_quantity:actualBtpRow.design_quantity, received:actualBtpRow.received, remaining:actualBtpRow.remaining, daily_progress:actualBtpRow.daily_progress, joint_check:actualBtpRow.joint_check, status:actualBtpRow.status, note:actualBtpRow.note };
     const btpChunk = await post(env, token, {
       action:'chunk', import_id:btpSession.import_id, start_row:0,
-      records:[{ source_sheet:actualBtpRow.source_sheet, source_row:actualBtpRow.source_row, part_no:actualBtpRow.part_no, material_type:actualBtpRow.material_type, description:actualBtpRow.description, material:actualBtpRow.material, unit:actualBtpRow.unit, size:actualBtpRow.size, length_mm:actualBtpRow.length_mm, unit_weight:actualBtpRow.unit_weight, total_weight:actualBtpRow.total_weight, design_quantity:actualBtpRow.design_quantity, received:actualBtpRow.received, remaining:actualBtpRow.remaining, daily_progress:actualBtpRow.daily_progress, joint_check:actualBtpRow.joint_check, status:actualBtpRow.status, note:actualBtpRow.note }],
+      records:[btpRecord],
     });
     assert.equal(btpChunk.status, 200, await btpChunk.text());
     const btpCommit = await post(env, token, { action:'commit', import_id:btpSession.import_id });
@@ -191,9 +192,23 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     assert.equal(btpResponse.status, 200);
     assert.equal((await btpResponse.json()).rows[0].part_no, actualBtpRow.part_no);
 
+    const btpReplacementBegin = await post(env, token, {
+      action:'begin', category:'btp', project_code:'A290', filename:'A290PL.xlsx', expected_rows:1,
+    });
+    const btpReplacementSession = await btpReplacementBegin.json();
+    const btpReplacementChunk = await post(env, token, {
+      action:'chunk', import_id:btpReplacementSession.import_id, start_row:0,
+      records:[{ ...btpRecord, source_row:btpRecord.source_row + 1, part_no:'REPLACED-BTP-ROW' }],
+    });
+    assert.equal(btpReplacementChunk.status, 200, await btpReplacementChunk.text());
+    const btpReplacementCommit = await post(env, token, { action:'commit', import_id:btpReplacementSession.import_id });
+    assert.equal(btpReplacementCommit.status, 200, await btpReplacementCommit.text());
+    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM btp_materials WHERE project_code = 'A290' AND source_file = 'A290PL.xlsx'").get().total), 1);
+    assert.equal(database.prepare("SELECT part_no FROM btp_materials WHERE project_code = 'A290' AND source_file = 'A290PL.xlsx'").get().part_no, 'REPLACED-BTP-ROW');
+
     const retryCommit = await post(env, token, { action: 'commit', import_id: session.import_id });
     assert.equal(retryCommit.status, 200);
-    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM import_runs WHERE project_code = 'A290'").get().total), 4);
+    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM import_runs WHERE project_code = 'A290'").get().total), 3);
     assert.equal(database.prepare("SELECT category FROM import_runs WHERE source_file = 'A290PL.xlsx' AND imported_rows = 1 ORDER BY rowid DESC").get().category, 'btp');
   } finally {
     database.close();
@@ -221,7 +236,7 @@ test('project data is public while PL file deletion is restricted to admins and 
       database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
         .run(createHash('sha256').update(token).digest('base64'), userId, Math.floor(Date.now() / 1000) + 3600);
     }
-    database.prepare('INSERT INTO projects (code, name, source_file) VALUES (?, ?, ?)').run('A290', 'A290', 'A290.xlsx');
+    database.prepare('INSERT INTO projects (code, name, source_file) VALUES (?, ?, ?)').run('A290', 'A290', 'OldPL.xlsx');
     database.prepare(`INSERT INTO materials (project_code, source_file, source_sheet, source_row, drawing, status)
       VALUES ('A290', 'OldPL.xlsx', 'PL', 1, 'OLD', 'old'), ('A290', 'KeepPL.xlsx', 'PL', 2, 'KEEP', 'ok')`).run();
     database.prepare(`INSERT INTO btp_materials (project_code, source_file, source_sheet, source_row, part_no)
@@ -275,6 +290,30 @@ test('project data is public while PL file deletion is restricted to admins and 
     assert.equal(database.prepare("SELECT drawing FROM materials WHERE source_file = 'KeepPL.xlsx'").get().drawing, 'KEEP');
     assert.equal(database.prepare("SELECT part_no FROM btp_materials WHERE source_file = 'KeepPL.xlsx'").get().part_no, 'BTP-KEEP');
     assert.equal(database.prepare('SELECT drawing FROM project_progress').get().drawing, 'QLDA-KEEP');
+    assert.equal(database.prepare("SELECT source_file FROM projects WHERE code = 'A290'").get().source_file, 'A290.xlsx');
+    const refreshedFiles = await worker.fetch(new Request('https://amecc.test/api/admin/pl-files', {
+      headers: { authorization: `Bearer ${adminToken}` },
+    }), env);
+    assert.deepEqual((await refreshedFiles.json()).files.map((file) => file.source_file), ['KeepPL.xlsx']);
+
+    database.prepare(`INSERT INTO materials (project_code, source_file, source_sheet, source_row, drawing, status)
+      VALUES ('A290', 'A290PL.xlsx', 'PL', 3, 'A290-PL', 'ok')`).run();
+    database.prepare(`INSERT INTO btp_materials (project_code, source_file, source_sheet, source_row, part_no)
+      VALUES ('A290', 'A290PL.xlsx', 'BTP-1', 3, 'A290-BTP')`).run();
+    database.prepare("UPDATE projects SET source_file = 'A290PL.xlsx' WHERE code = 'A290'").run();
+    const clearMaterials = await post(env, adminToken, {
+      action:'clear-category', category:'materials', project_code:'A290', filename:'A290PL.xlsx',
+    });
+    assert.equal(clearMaterials.status, 200);
+    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM materials WHERE source_file = 'A290PL.xlsx'").get().total), 0);
+    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM btp_materials WHERE source_file = 'A290PL.xlsx'").get().total), 1);
+    assert.equal(database.prepare("SELECT source_file FROM projects WHERE code = 'A290'").get().source_file, 'A290PL.xlsx');
+    const clearBtp = await post(env, adminToken, {
+      action:'clear-category', category:'btp', project_code:'A290', filename:'A290PL.xlsx',
+    });
+    assert.equal(clearBtp.status, 200);
+    assert.equal(Number(database.prepare("SELECT COUNT(*) AS total FROM btp_materials WHERE source_file = 'A290PL.xlsx'").get().total), 0);
+    assert.equal(database.prepare("SELECT source_file FROM projects WHERE code = 'A290'").get().source_file, 'A290.xlsx');
   } finally {
     database.close();
   }

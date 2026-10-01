@@ -355,6 +355,24 @@ async function listPlFiles(env) {
   return results;
 }
 
+function projectSourceFallbackStatement(env, projectCode, filename) {
+  return env.DB.prepare(
+    `UPDATE projects SET source_file = COALESCE(
+      (SELECT source_file FROM project_progress WHERE project_code = ? ORDER BY imported_at DESC, id DESC LIMIT 1),
+      (SELECT source_file FROM (
+        SELECT source_file, MAX(imported_at) AS imported_at FROM (
+          SELECT source_file, imported_at FROM materials WHERE project_code = ?
+          UNION ALL
+          SELECT source_file, imported_at FROM btp_materials WHERE project_code = ?
+        ) GROUP BY source_file
+      ) ORDER BY imported_at DESC, source_file LIMIT 1),
+      code || '.xlsx'
+    ) WHERE code = ? AND source_file = ? COLLATE NOCASE
+      AND NOT EXISTS (SELECT 1 FROM materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE)
+      AND NOT EXISTS (SELECT 1 FROM btp_materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE)`
+  ).bind(projectCode, projectCode, projectCode, projectCode, filename, projectCode, filename, projectCode, filename);
+}
+
 async function deletePlFile(request, env) {
   await requireAdmin(request, env);
   const body = await request.json().catch(() => null);
@@ -366,6 +384,7 @@ async function deletePlFile(request, env) {
     env.DB.prepare('DELETE FROM materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
     env.DB.prepare('DELETE FROM btp_materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
     env.DB.prepare("DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category IN ('materials', 'btp')").bind(projectCode, filename),
+    projectSourceFallbackStatement(env, projectCode, filename),
   ]);
   const deletedRows = results.slice(0, 2).reduce((total, result) => total + Number(result.meta?.changes || 0), 0);
   if (!deletedRows) throw new HttpError(404, 'Không tìm thấy file PL/BTP để xóa.');
@@ -452,6 +471,25 @@ async function importMaterials(request, env) {
     return json({ import_id: id, chunk_size: category === 'btp' ? BTP_CHUNK_SIZE : MATERIAL_CHUNK_SIZE, expected_rows: expectedRows, expires_at: expiresAt }, 201);
   }
 
+  if (body.action === 'clear-category') {
+    const category = body.category === 'btp' ? 'btp' : 'materials';
+    const projectCode = safeProjectCode(body.project_code);
+    const filename = String(body.filename || '');
+    if (!/^[\w.-]{1,255}PL\.xlsx$/i.test(filename)) {
+      throw new HttpError(400, 'Tên file vật tư phải kết thúc bằng PL.xlsx, ví dụ M304PL.xlsx.');
+    }
+    if (projectCode !== projectCodeFromFilename(filename, 'materials')) {
+      throw new HttpError(400, 'Mã dự án phải khớp với phần tên file đứng trước PL.xlsx.');
+    }
+    const table = category === 'btp' ? 'btp_materials' : 'materials';
+    const results = await env.DB.batch([
+      env.DB.prepare(`DELETE FROM ${table} WHERE project_code = ? AND source_file = ? COLLATE NOCASE`).bind(projectCode, filename),
+      env.DB.prepare('DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category = ?').bind(projectCode, filename, category),
+      projectSourceFallbackStatement(env, projectCode, filename),
+    ]);
+    return json({ project_code: projectCode, category, source_file: filename, deleted_rows: Number(results[0]?.meta?.changes || 0), cleared: true });
+  }
+
   const importId = String(body.import_id || '');
   if (!/^[0-9a-f-]{36}$/i.test(importId)) throw new HttpError(400, 'Mã phiên nhập không hợp lệ.');
   const manifest = await env.DB.prepare('SELECT * FROM material_imports WHERE id = ? AND expires_at > ?')
@@ -536,6 +574,8 @@ async function importMaterials(request, env) {
           .bind(manifest.project_code, importId, runId, manifest.source_file)
         : env.DB.prepare('DELETE FROM materials WHERE project_code = ? AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) AND source_file = ? COLLATE NOCASE')
           .bind(manifest.project_code, importId, runId, manifest.source_file),
+      env.DB.prepare('DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category = ? AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?)')
+        .bind(manifest.project_code, manifest.source_file, isBtp ? 'btp' : 'materials', importId, runId),
     ];
     const commitBatchSize = isBtp ? BTP_COMMIT_BATCH_SIZE : MATERIAL_COMMIT_BATCH_SIZE;
     for (let startRow = 0; startRow < Number(manifest.expected_rows); startRow += commitBatchSize) {

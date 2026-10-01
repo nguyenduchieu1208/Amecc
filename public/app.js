@@ -1,6 +1,6 @@
 const API_BASE = String(window.AMECC_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
 const ADMIN_MODE = /(?:^|\/)admin\.html$/.test(window.location.pathname);
-import { projectCodeFromFilename, readMaterialWorkbook } from './material-import.js';
+import { MAX_MATERIAL_FILE_BYTES, MAX_MATERIAL_FILE_MB, projectCodeFromFilename, readMaterialWorkbook } from './material-import.js';
 import { getBtpShortageQuantity, getBtpShortageWeight, highlightMatch } from './material-search.js';
 import { formatMaterialDate } from './material-display.js';
 import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortage-export.js';
@@ -396,7 +396,7 @@ function projectsPage() {
 function adminPage() {
   return `${heading('ACCESS CONTROL · ADMIN','Quản trị tài khoản & dữ liệu','Tạo tài khoản chỉ xem và nhập dữ liệu thực từ workbook trên máy tính của bạn.')}
     <div class="admin-grid"><section class="panel"><div class="panel-title"><span class="eyebrow">USER ACCESS</span><h3>Tạo tài khoản người xem</h3><p>Tài khoản viewer chỉ có quyền đọc dữ liệu; không thể tải hoặc thay thế dữ liệu.</p></div><form id="viewerForm" class="form-grid"><label>Tên đăng nhập<input name="username" minlength="3" maxlength="64" required></label><label>Mật khẩu tạm (ít nhất 12 ký tự)<input name="password" type="password" minlength="12" required></label><button class="button primary" type="submit">Tạo tài khoản viewer</button><div class="form-message" id="viewerMessage" aria-live="polite"></div></form></section>
-    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>PL và BTP được phân tích trên trình duyệt rồi gửi JSON; có thể chọn nhiều file PL. Nhập từng file an toàn, không xóa các file khác của dự án.</p></div><form id="importForm" class="form-grid"><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL + BTP</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small id="importFileHint">Chọn một hoặc nhiều file PL, tên mỗi file kết thúc bằng PL.xlsx; tối đa 10 MB/file.</small></label><div class="form-message import-project-preview" id="importProjectPreview" aria-live="polite">Mã dự án sẽ lấy từ tên file.</div><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section></div>
+    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>PL và BTP được phân tích trên trình duyệt rồi gửi JSON; có thể chọn nhiều file PL. Tải file trùng tên sẽ thay thế dữ liệu cũ cùng file.</p></div><form id="importForm" class="form-grid"><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL + BTP</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small id="importFileHint">Chọn một hoặc nhiều file PL, tên mỗi file kết thúc bằng PL.xlsx; tối đa ${MAX_MATERIAL_FILE_MB} MB/file.</small></label><div class="form-message import-project-preview" id="importProjectPreview" aria-live="polite">Mã dự án sẽ lấy từ tên file.</div><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section></div>
     <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">PL / BTP FILES</span><h3>File vật tư đang lưu</h3><p>Xóa file tại đây để gỡ dữ liệu PL/BTP cũ trước khi nhập file thay thế. Tiến độ QLDA không bị ảnh hưởng.</p></div><div id="plFileList">${plFilesMarkup()}</div></section>
     <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">PROJECT DATA</span><h3>Các dự án trên hệ thống</h3></div>${state.projects.length ? `<div class="account-list">${state.projects.map((project) => `<div class="account-row"><b>${esc(project.code)}</b><span>${fmt(project.material_rows)} vật tư</span><span>${fmt(project.progress_rows)} tiến độ</span><small>${fmt(project.updated_at)}</small></div>`).join('')}</div>` : '<p class="muted">Chưa nhập workbook nào.</p>'}</section>`;
 }
@@ -455,7 +455,7 @@ function bindPage() {
       importFile.multiple = Boolean(isMaterials);
     }
     if (importFileHint) importFileHint.textContent = isMaterials
-      ? 'Chọn file theo dạng mã dự án + PL.xlsx (ví dụ A290PL.xlsx); tối đa 10 MB/file.'
+      ? `Chọn file theo dạng mã dự án + PL.xlsx (ví dụ M304PL.xlsx); tối đa ${MAX_MATERIAL_FILE_MB} MB/file.`
       : 'Tên file là mã dự án.xlsx (ví dụ A290.xlsx), cần sheet Progress; tối đa 10 MB.';
     updateImportProjectPreview();
   };
@@ -645,6 +645,7 @@ function bindPage() {
     let completedMaterialRows = 0;
     let completedMaterialFiles = 0;
     let selectedMaterialFiles = 0;
+    const failedMaterialFiles = [];
     const projectCodes = new Set();
     try {
       let result;
@@ -659,65 +660,75 @@ function bindPage() {
           const key = file.name.toLocaleLowerCase();
           if (filenames.has(key)) throw new Error(`Bạn đã chọn trùng tên file ${file.name}; hãy chỉ chọn một bản.`);
           filenames.add(key);
-          if (file.size === 0 || file.size > 10 * 1024 * 1024 || !/^[\w.-]+PL\.xlsx$/i.test(file.name)) {
-            throw new Error(`File ${file.name} không hợp lệ: PL phải có tên kết thúc bằng PL.xlsx và dung lượng tối đa 10 MB.`);
-          }
+          if (file.size === 0) throw new Error(`File ${file.name} đang trống.`);
+          if (file.size > MAX_MATERIAL_FILE_BYTES) throw new Error(`File ${file.name} có dung lượng ${(file.size / 1024 / 1024).toFixed(1)} MB, vượt giới hạn ${MAX_MATERIAL_FILE_MB} MB.`);
+          if (!/^[\w.-]+PL\.xlsx$/i.test(file.name)) throw new Error(`Tên file ${file.name} phải kết thúc bằng PL.xlsx, ví dụ M304PL.xlsx.`);
           projectCodes.add(projectCodeFromFilename(file.name, 'materials'));
         }
         for (const [fileIndex, file] of files.entries()) {
-        output.textContent = `Đang đọc file ${fileIndex + 1}/${files.length}: ${file.name}…`;
-        const projectCode = projectCodeFromFilename(file.name, 'materials');
-        const payload = await readMaterialWorkbook(file, projectCode, xlsx);
-        output.textContent = `Đang đọc file ${fileIndex + 1}/${files.length}: ${payload.filename} (${payload.records.length.toLocaleString('vi-VN')} dòng PL, ${payload.btp_records.length.toLocaleString('vi-VN')} dòng BTP)…`;
-        for (const [category, categoryRecords] of [['materials', payload.records], ['btp', payload.btp_records]]) {
-          if (!categoryRecords.length) continue;
-          output.textContent = `Đang nhập ${category === 'btp' ? 'BTP' : 'PL'} · ${payload.filename} (${categoryRecords.length.toLocaleString('vi-VN')} dòng)…`;
-          const importSession = await api('/api/admin/import/materials', {
-            method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ action: 'begin', category, project_code: payload.project_code, filename: payload.filename, expected_rows: categoryRecords.length }),
-          });
           try {
-            const chunkSize = importSession.chunk_size;
-            let start = 0;
-            while (start < categoryRecords.length) {
-              let rowCount = Math.min(chunkSize, categoryRecords.length - start);
-              let records = categoryRecords.slice(start, start + rowCount);
-              let chunkBody = JSON.stringify({ action: 'chunk', import_id: importSession.import_id, start_row: start, records });
-              while (new TextEncoder().encode(chunkBody).byteLength > 512 * 1024 && rowCount > 1) {
-                rowCount = Math.max(1, Math.floor(rowCount / 2));
-                records = categoryRecords.slice(start, start + rowCount);
-                chunkBody = JSON.stringify({ action: 'chunk', import_id: importSession.import_id, start_row: start, records });
+            output.textContent = `Đang đọc file ${fileIndex + 1}/${files.length}: ${file.name}…`;
+            const projectCode = projectCodeFromFilename(file.name, 'materials');
+            const payload = await readMaterialWorkbook(file, projectCode, xlsx);
+            output.textContent = `Đang đọc file ${fileIndex + 1}/${files.length}: ${payload.filename} (${payload.records.length.toLocaleString('vi-VN')} dòng PL, ${payload.btp_records.length.toLocaleString('vi-VN')} dòng BTP)…`;
+            for (const [category, categoryRecords] of [['materials', payload.records], ['btp', payload.btp_records]]) {
+              if (!categoryRecords.length) {
+                await api('/api/admin/import/materials', {
+                  method: 'POST', headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ action: 'clear-category', category, project_code: payload.project_code, filename: payload.filename }),
+                });
+                continue;
               }
-              if (new TextEncoder().encode(chunkBody).byteLength > 512 * 1024) {
-                throw new Error(`Dòng ${start + 1} quá lớn để tải an toàn; dữ liệu hiện hành chưa bị thay đổi.`);
-              }
-              await api('/api/admin/import/materials', {
-                method: 'POST', headers: { 'content-type': 'application/json' }, body: chunkBody,
-              });
-              output.textContent = `${category === 'btp' ? 'BTP' : 'PL'} · ${payload.filename}: ${Math.min(start + records.length, categoryRecords.length).toLocaleString('vi-VN')}/${categoryRecords.length.toLocaleString('vi-VN')} dòng…`;
-              start += records.length;
-            }
-            const commitRequest = {
-              method: 'POST', headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ action: 'commit', import_id: importSession.import_id }),
-            };
-            try { result = await api('/api/admin/import/materials', commitRequest); }
-            catch (commitError) {
-              try { result = await api('/api/admin/import/materials', commitRequest); }
-              catch { throw commitError; }
-            }
-          } catch (error) {
-            try {
-              await api('/api/admin/import/materials', {
+              output.textContent = `Đang nhập ${category === 'btp' ? 'BTP' : 'PL'} · ${payload.filename} (${categoryRecords.length.toLocaleString('vi-VN')} dòng)…`;
+              const importSession = await api('/api/admin/import/materials', {
                 method: 'POST', headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ action: 'abort', import_id: importSession.import_id }),
+                body: JSON.stringify({ action: 'begin', category, project_code: payload.project_code, filename: payload.filename, expected_rows: categoryRecords.length }),
               });
-            } catch { /* Expired imports are cleaned up automatically. */ }
-            throw error;
+              try {
+                const chunkSize = importSession.chunk_size;
+                let start = 0;
+                while (start < categoryRecords.length) {
+                  let rowCount = Math.min(chunkSize, categoryRecords.length - start);
+                  let records = categoryRecords.slice(start, start + rowCount);
+                  let chunkBody = JSON.stringify({ action: 'chunk', import_id: importSession.import_id, start_row: start, records });
+                  while (new TextEncoder().encode(chunkBody).byteLength > 512 * 1024 && rowCount > 1) {
+                    rowCount = Math.max(1, Math.floor(rowCount / 2));
+                    records = categoryRecords.slice(start, start + rowCount);
+                    chunkBody = JSON.stringify({ action: 'chunk', import_id: importSession.import_id, start_row: start, records });
+                  }
+                  if (new TextEncoder().encode(chunkBody).byteLength > 512 * 1024) {
+                    throw new Error(`Dòng ${start + 1} quá lớn để tải an toàn; dữ liệu hiện hành chưa bị thay đổi.`);
+                  }
+                  await api('/api/admin/import/materials', {
+                    method: 'POST', headers: { 'content-type': 'application/json' }, body: chunkBody,
+                  });
+                  output.textContent = `${category === 'btp' ? 'BTP' : 'PL'} · ${payload.filename}: ${Math.min(start + records.length, categoryRecords.length).toLocaleString('vi-VN')}/${categoryRecords.length.toLocaleString('vi-VN')} dòng…`;
+                  start += records.length;
+                }
+                const commitRequest = {
+                  method: 'POST', headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ action: 'commit', import_id: importSession.import_id }),
+                };
+                try { result = await api('/api/admin/import/materials', commitRequest); }
+                catch (commitError) {
+                  try { result = await api('/api/admin/import/materials', commitRequest); }
+                  catch { throw commitError; }
+                }
+              } catch (error) {
+                try {
+                  await api('/api/admin/import/materials', {
+                    method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ action: 'abort', import_id: importSession.import_id }),
+                  });
+                } catch { /* Expired imports are cleaned up automatically. */ }
+                throw error;
+              }
+              completedMaterialRows += result.imported_rows;
+            }
+            completedMaterialFiles += 1;
+          } catch (error) {
+            failedMaterialFiles.push({ filename: file.name, message: error.message || 'Lỗi không xác định' });
           }
-          completedMaterialRows += result.imported_rows;
-        }
-        completedMaterialFiles += 1;
         }
         result = { project_code: [...projectCodes].join(', '), imported_rows: completedMaterialRows };
       } else {
@@ -727,8 +738,19 @@ function bindPage() {
         projectCodes.add(projectCodeFromFilename(files[0].name, 'projects'));
         result = await api(`/api/admin/import/${endpoint}`,{method:'POST',body:data});
       }
-      output.textContent = `Đã nhập ${result.imported_rows.toLocaleString('vi-VN')} dòng${endpoint === 'materials' ? ` PL/BTP từ ${form.querySelector('[name="file"]').files.length} file` : ''} cho dự án ${result.project_code}.`; output.className = 'form-message success-message'; form.reset(); updateImportFileMode(); updateImportProjectPreview(); await refreshProjects();
-      if (endpoint === 'materials') { await refreshPlFiles(); const list = document.querySelector('#plFileList'); if (list) list.innerHTML = plFilesMarkup(); bindPlFileDeleteButtons(); }
+      if (endpoint === 'materials' && failedMaterialFiles.length) {
+        const failedSummary = failedMaterialFiles.map(({ filename, message }) => `• ${filename}: ${message}`).join('\n');
+        output.textContent = `Đã nhập ${result.imported_rows.toLocaleString('vi-VN')} dòng; hoàn tất đủ dữ liệu PL/BTP cho ${completedMaterialFiles}/${selectedMaterialFiles} file. Các file lỗi vẫn còn được chọn để thử lại:\n${failedSummary}`;
+        output.style.whiteSpace = 'pre-line';
+        output.className = 'form-message error-message';
+      } else {
+        output.textContent = `Đã nhập ${result.imported_rows.toLocaleString('vi-VN')} dòng${endpoint === 'materials' ? ` PL/BTP từ ${form.querySelector('[name="file"]').files.length} file` : ''} cho dự án ${result.project_code}.`;
+        output.style.whiteSpace = '';
+        output.className = 'form-message success-message';
+        form.reset(); updateImportFileMode(); updateImportProjectPreview();
+      }
+      if (endpoint === 'materials' && (completedMaterialRows || !failedMaterialFiles.length)) { await Promise.all([refreshProjects(), refreshPlFiles()]); const list = document.querySelector('#plFileList'); if (list) list.innerHTML = plFilesMarkup(); bindPlFileDeleteButtons(); }
+      else await refreshProjects();
     }
     catch (error) {
       output.textContent = completedMaterialRows
