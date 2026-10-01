@@ -4,6 +4,7 @@ __pycache__/
 .env
 .dev.vars
 node_modules/
+data/
 .wrangler/
 *.sqlite
 *.db

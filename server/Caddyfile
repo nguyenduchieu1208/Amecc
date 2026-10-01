@@ -1,0 +1,4 @@
+{$AMECC_API_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy amecc-api:8787
+}

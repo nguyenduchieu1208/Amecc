@@ -23,6 +23,17 @@ test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(MAX_MATERIAL_FILE_BYTES, 20 * 1024 * 1024);
 });
 
+test('D1 free daily row limits return actionable retry messages instead of a generic server error', () => {
+  const writeLimit = __test__.workerErrorDetails(new Error("D1_ERROR: Your account has exceeded D1's free tier daily row write limit."));
+  assert.equal(writeLimit.status, 429);
+  assert.match(writeLimit.message, /hết hạn mức ghi miễn phí/);
+  assert.match(writeLimit.message, /00:00 UTC/);
+  const readLimit = __test__.workerErrorDetails(new Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit."));
+  assert.equal(readLimit.status, 429);
+  assert.match(readLimit.message, /hết hạn mức đọc miễn phí/);
+  assert.equal(__test__.workerErrorDetails(new Error('unexpected')).status, 500);
+});
+
 test('QLDA mapping exposes selected fields and excludes hidden source columns', () => {
   assert.equal(__test__.QLDA_FIELDS[2], 'project_code');
   for (const column of [1,3,4,20,21,22,30,31,32,33,34,35,45,54,55,56,57,58,60,163,164]) {

@@ -48,6 +48,33 @@
 
   Script CLI dùng cùng PBKDF2-SHA-256 với Worker. Admin đầu tiên nên được khởi tạo qua endpoint setup ở trên.
 
+## Phương án API miễn phí: OCI Always Free + SQLite
+
+GitHub Pages tiếp tục phục vụ giao diện tĩnh; API thay D1 bằng Node.js và SQLite trên VM Oracle Cloud Infrastructure (OCI) Always Free. Cùng một mã API hiện tại được chạy qua lớp tương thích SQLite, nên giữ các endpoint, quyền admin/viewer và quy trình nhập dữ liệu. SQLite WAL đặt trên ổ đĩa VM; Caddy cấp HTTPS miễn phí cho API. Không dùng Cloudflare Worker/D1 trong đích triển khai mới.
+
+OCI công bố mức Always Free gồm tối đa 2 OCPU và 12 GB RAM cho Ampere A1, cùng 10 TB dữ liệu gửi ra mỗi tháng. Đây là hạn mức có điều kiện, không phải không giới hạn: tài khoản đăng ký thường cần số điện thoại/thẻ để xác minh, Oracle nói không thu phí khi chưa nâng cấp; Oracle cũng có thể thu hồi VM nếu bị coi là nhàn rỗi trong 7 ngày và khu vực đăng ký có thể hết chỗ. Chỉ tạo tài nguyên mang nhãn **Always Free Eligible**, không bấm nâng cấp sang tài khoản trả phí.
+
+### Khôi phục dữ liệu D1
+
+Trước khi chuyển, xuất D1 ra file SQL trên máy quản trị viên, sau đó tạo SQLite mới bằng:
+
+```powershell
+node scripts/restore-d1-backup.js Data/cloudflare-d1-backup.sql Data/amecc.sqlite
+```
+
+File `.sqlite` và bản SQL phải được giữ ngoài Git. Chép `amecc.sqlite` lên thư mục `data/` trên VM trước khi khởi chạy container lần đầu. Backend tự nhận schema đã được khôi phục và đánh dấu các migration hiện hành; nếu database trống, backend áp dụng toàn bộ migration lúc khởi động.
+
+### Triển khai API trên VM
+
+1. Tạo một VM **Always Free Eligible** chạy Ubuntu, cho phép cổng 80/443 trong OCI network security list; giới hạn SSH cổng 22 theo IP quản trị. Gắn public IP ổn định.
+2. Tạo hostname HTTPS miễn phí (ví dụ DuckDNS) và trỏ bản ghi `A` tới public IP VM.
+3. Cài Docker Engine + Docker Compose, chép repository lên VM và tạo file `.env` theo `.env.example`. Điền hostname thật và khóa setup ngẫu nhiên mạnh.
+4. Chép database khôi phục vào `data/amecc.sqlite`, rồi chạy `docker compose up -d --build`. Kiểm tra `https://<hostname>/api/health` trả `{"ok":true,"service":"amecc-api"}`.
+5. Sau khi API health hoạt động, đổi `apiBaseUrl` trong `public/config.js` sang hostname HTTPS mới và deploy GitHub Pages. Đăng nhập admin, kiểm tra các dự án, sheet, ngày nhận, xuất Excel, thử nhập một workbook nhỏ, rồi nhập bộ dữ liệu còn lại.
+6. Khi dữ liệu và thao tác đã được xác minh trên trang Pages, gỡ `ADMIN_SETUP_KEY` khỏi `.env`, chạy lại `docker compose up -d`, rồi mới cân nhắc dừng Worker cũ. Giữ bản SQL gốc làm bản sao lưu ngoại tuyến.
+
+**Chưa chuyển website đang chạy tự động:** cần hostname HTTPS và VM OCI do chủ tài khoản tạo trước khi đổi `public/config.js`. Giữ nguyên backend hiện tại đến khi API mới và dữ liệu khôi phục qua kiểm tra trực tiếp; tránh làm trang đang dùng mất kết nối giữa chừng.
+
 ## Quyền riêng tư & vận hành
 
 - Trước khi cho phép người dùng production, cần điền đúng Cloudflare `database_id`, deploy Worker/D1/migration, URL Worker, URL Pages thật và bí mật setup; không đưa secret vào repo.

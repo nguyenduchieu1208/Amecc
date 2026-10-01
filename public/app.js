@@ -50,7 +50,11 @@ async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, { credentials: 'omit', ...options, headers });
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await response.json() : {};
-  if (!response.ok) throw new Error(data.error || 'Không thể hoàn thành yêu cầu.');
+  if (!response.ok) {
+    const error = new Error(data.error || 'Không thể hoàn thành yêu cầu.');
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
@@ -646,6 +650,8 @@ function bindPage() {
     let completedMaterialFiles = 0;
     let selectedMaterialFiles = 0;
     const failedMaterialFiles = [];
+    let importStopReason = '';
+    let unprocessedMaterialFiles = 0;
     const projectCodes = new Set();
     try {
       let result;
@@ -728,6 +734,11 @@ function bindPage() {
             completedMaterialFiles += 1;
           } catch (error) {
             failedMaterialFiles.push({ filename: file.name, message: error.message || 'Lỗi không xác định' });
+            if (error.status === 429) {
+              importStopReason = error.message;
+              unprocessedMaterialFiles = files.length - fileIndex - 1;
+              break;
+            }
           }
         }
         result = { project_code: [...projectCodes].join(', '), imported_rows: completedMaterialRows };
@@ -740,7 +751,10 @@ function bindPage() {
       }
       if (endpoint === 'materials' && failedMaterialFiles.length) {
         const failedSummary = failedMaterialFiles.map(({ filename, message }) => `• ${filename}: ${message}`).join('\n');
-        output.textContent = `Đã nhập ${result.imported_rows.toLocaleString('vi-VN')} dòng; hoàn tất đủ dữ liệu PL/BTP cho ${completedMaterialFiles}/${selectedMaterialFiles} file. Các file lỗi vẫn còn được chọn để thử lại:\n${failedSummary}`;
+        const stoppedSummary = importStopReason
+          ? `\n${importStopReason}${unprocessedMaterialFiles ? ` Còn ${unprocessedMaterialFiles} file chưa gửi.` : ''} Danh sách file vẫn được giữ để thử lại sau.`
+          : '\nCác file lỗi vẫn còn được chọn để thử lại.';
+        output.textContent = `Đã nhập ${result.imported_rows.toLocaleString('vi-VN')} dòng; hoàn tất đủ dữ liệu PL/BTP cho ${completedMaterialFiles}/${selectedMaterialFiles} file.\n${failedSummary}${stoppedSummary}`;
         output.style.whiteSpace = 'pre-line';
         output.className = 'form-message error-message';
       } else {

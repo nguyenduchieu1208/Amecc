@@ -45,6 +45,26 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
+function workerErrorDetails(error) {
+  const detail = String(error?.message || '');
+  if (/D1's free tier daily row write limit/i.test(detail)) {
+    return {
+      status: 429,
+      message: 'Cloudflare D1 đã hết hạn mức ghi miễn phí hôm nay. Tạm dừng nhập và xóa dữ liệu; hệ thống sẽ cho phép thử lại sau 00:00 UTC (07:00 giờ Việt Nam/Thái Lan). Dữ liệu đã lưu không bị xóa.',
+    };
+  }
+  if (/D1's free tier daily row read limit/i.test(detail)) {
+    return {
+      status: 429,
+      message: 'Cloudflare D1 đã hết hạn mức đọc miễn phí hôm nay. Hệ thống sẽ cho phép thử lại sau 00:00 UTC (07:00 giờ Việt Nam/Thái Lan). Dữ liệu đã lưu không bị ảnh hưởng.',
+    };
+  }
+  return {
+    status: error instanceof HttpError ? error.status : 500,
+    message: error instanceof HttpError ? error.message : 'Lỗi máy chủ khi xử lý yêu cầu.',
+  };
+}
+
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -673,12 +693,11 @@ export default {
       for (const [key, value] of Object.entries(cors)) headers.set(key, value);
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500;
-      const message = error instanceof HttpError ? error.message : 'Lỗi máy chủ khi xử lý yêu cầu.';
-      if (status === 500) console.error('Worker request failed', error);
+      const { status, message } = workerErrorDetails(error);
+      if (status === 500 || status === 429) console.error('Worker request failed', error);
       return json({ error: message }, status, cors);
     }
   },
 };
 
-export const __test__ = { safeProjectCode, normalizedRow, parseProjectProgress, parseMaterials, validWorkbook, validateImportRecords, QLDA_FIELDS, MATERIAL_FIELDS, MATERIAL_IMPORT_COLUMNS, BTP_IMPORT_COLUMNS, MATERIAL_CHUNK_SIZE, MATERIAL_INSERT_ROWS_PER_STATEMENT, MATERIAL_COMMIT_BATCH_SIZE };
+export const __test__ = { safeProjectCode, normalizedRow, parseProjectProgress, parseMaterials, validWorkbook, validateImportRecords, workerErrorDetails, QLDA_FIELDS, MATERIAL_FIELDS, MATERIAL_IMPORT_COLUMNS, BTP_IMPORT_COLUMNS, MATERIAL_CHUNK_SIZE, MATERIAL_INSERT_ROWS_PER_STATEMENT, MATERIAL_COMMIT_BATCH_SIZE };
