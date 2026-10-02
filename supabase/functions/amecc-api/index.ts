@@ -34,8 +34,9 @@ Deno.serve(async (request) => {
       DB: new PostgresD1Adapter(getClient()),
       ALLOWED_ORIGIN: 'https://nguyenduchieu1208.github.io',
       ADMIN_SETUP_KEY: Deno.env.get('ADMIN_SETUP_KEY') || '',
+      DRIVE_SYNC_TOKEN: Deno.env.get('DRIVE_SYNC_TOKEN') || '',
       SESSION_TTL_SECONDS: '28800',
-      MAX_UPLOAD_BYTES: '10485760',
+      MAX_UPLOAD_BYTES: '20971520',
     };
     return await worker.fetch(routedRequest, env);
   } catch (error) {

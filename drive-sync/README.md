@@ -1,0 +1,39 @@
+# AMECC Drive sync
+
+This Apps Script watches the private Drive folder and imports only changed `*PL.xlsx` files. It reads the workbooks with the same parser as the website, skips the `Purchasing` sheet, sends PL/BTP rows in safe chunks, and replaces the existing rows for each same-named file. It does not copy the original Excel files to GitHub or Supabase Storage.
+
+## One-time setup
+
+1. Deploy the latest AMECC website and Supabase function. The `drive-sync-parser.js` asset must be reachable from the GitHub Pages URL.
+2. Create a strong random sync token. Store it as the Supabase Edge Function secret `DRIVE_SYNC_TOKEN`, and redeploy `amecc-api`. Do not commit or paste the token into `Code.gs`.
+3. Open [Google Apps Script](https://script.google.com/home/start), create a project, paste `Code.gs`, and replace `appsscript.json` with the manifest in this folder (enable **Project Settings → Show "appsscript.json" manifest file** first).
+4. In **Project Settings → Script Properties**, add:
+   - `AMECC_DRIVE_FOLDER_ID` = `13DHt0iRys8IqultlVc0WDMlvv2IDq8E6`
+   - `AMECC_DRIVE_SYNC_TOKEN` = the same token stored in Supabase
+5. Run `setupAmeccDriveSync` once and approve the Google Drive read-only and external-request permissions. It installs a one-minute trigger and starts the first sync.
+
+The first run scans all eligible files. Changed workbooks are retried if an API request fails; successful files are skipped until their Drive modification time or size changes. Check **Apps Script → Executions** for per-file `DONE` or `FAILED` records. `resetAmeccDriveSyncFailures` clears retry delays when you have corrected a permanent configuration issue.
+
+Use `stopAmeccDriveSync` to remove the time trigger. It leaves the data already imported on the site unchanged. When the site's workbook parser changes, run `npm run drive-sync:bundle` before deploying Pages so the pinned parser asset and its integrity hashes stay aligned.
+
+The importer currently accepts `.xlsx` files up to 20 MiB, matching the largest source file observed in the folder. A Google Apps Script execution is limited to six minutes, so an initial sync may continue on the next one-minute trigger if it reaches its per-run time budget; it does not promise all 13 files in one minute. Later updates normally send only the changed file.
+
+## Token setup using Supabase CLI
+
+Run this in PowerShell after `npx supabase login` and `npx supabase link --project-ref ymewopsgearpdsvzyaxb`:
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$env:AMECC_DRIVE_SYNC_TOKEN = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
+$rng.Dispose()
+npx supabase secrets set "DRIVE_SYNC_TOKEN=$env:AMECC_DRIVE_SYNC_TOKEN" --project-ref ymewopsgearpdsvzyaxb
+npx supabase functions deploy amecc-api --project-ref ymewopsgearpdsvzyaxb
+```
+
+Keep the generated value only long enough to paste into Apps Script Script Properties, then clear it from the current PowerShell session:
+
+```powershell
+Remove-Item Env:AMECC_DRIVE_SYNC_TOKEN
+```

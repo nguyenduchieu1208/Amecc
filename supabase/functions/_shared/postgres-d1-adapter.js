@@ -77,6 +77,9 @@ class PostgresD1Statement {
 export class PostgresD1Adapter {
   constructor(client) {
     this.client = client;
+    this.maxBindParameters = 60000;
+    this.materialImportChunkSize = 2000;
+    this.materialCommitBatchSize = 5000;
   }
 
   prepare(sql) {

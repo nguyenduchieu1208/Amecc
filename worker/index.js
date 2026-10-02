@@ -1,5 +1,5 @@
 const encoder = new TextEncoder();
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const SESSION_SECONDS = 8 * 60 * 60;
 const MATERIAL_COLUMNS = [
   'project_code', 'source_file', 'source_sheet', 'source_row', 'drawing', 'assembly',
@@ -162,7 +162,7 @@ function rowsFromSheet(sheet, xlsx) {
 
 function validWorkbook(bytes, xlsx) {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength < 100 || bytes.byteLength > MAX_FILE_BYTES) {
-    throw new HttpError(400, 'File phải là workbook XLSX hợp lệ và không vượt quá 10 MB.');
+    throw new HttpError(400, 'File phải là workbook XLSX hợp lệ và không vượt quá 20 MB.');
   }
   try {
     return xlsx.read(bytes, { type: 'array', cellDates: true, bookVBA: false });
@@ -288,6 +288,14 @@ async function requireAdmin(request, env) {
   const user = await requireUser(request, env);
   if (user.role !== 'admin') throw new HttpError(403, 'Chỉ admin được phép tải dữ liệu lên.');
   return user;
+}
+
+async function requireDriveSync(request, env) {
+  const authorization = request.headers.get('Authorization') || '';
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1] || '';
+  if (!env.DRIVE_SYNC_TOKEN || !constantTimeEqual(bearer, env.DRIVE_SYNC_TOKEN)) {
+    throw new HttpError(401, 'Token đồng bộ Drive không hợp lệ.');
+  }
 }
 
 async function login(request, env) {
@@ -435,7 +443,7 @@ async function importWorkbook(request, env, category) {
   await requireAdmin(request, env);
   const contentLength = Number(request.headers.get('Content-Length') || 0);
   const maxBytes = Math.min(Number(env.MAX_UPLOAD_BYTES || MAX_FILE_BYTES), MAX_FILE_BYTES);
-  if (contentLength > maxBytes) throw new HttpError(413, 'File vượt quá giới hạn 10 MB.');
+  if (contentLength > maxBytes) throw new HttpError(413, 'File vượt quá giới hạn 20 MB.');
   const contentType = request.headers.get('Content-Type') || '';
   if (category === 'projects' && contentType.toLowerCase().includes('application/json')) {
     return importProjectRows(request, env);
@@ -449,7 +457,7 @@ async function importWorkbook(request, env, category) {
   if (!(file instanceof File)) throw new HttpError(400, 'Vui lòng chọn file Excel.');
   filename = file.name;
   if (!/^[\w.-]+\.xlsx$/i.test(filename) || file.size > maxBytes || file.size === 0) {
-    throw new HttpError(400, 'Chỉ nhận workbook .xlsx hợp lệ, dung lượng tối đa 10 MB.');
+    throw new HttpError(400, 'Chỉ nhận workbook .xlsx hợp lệ, dung lượng tối đa 20 MB.');
   }
   projectCode = projectCodeFromFilename(filename, category);
   const xlsxPackage = 'xlsx';
@@ -600,7 +608,11 @@ async function importProjectRows(request, env) {
 }
 
 async function importMaterials(request, env) {
-  await requireAdmin(request, env);
+  try { await requireDriveSync(request, env); }
+  catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 401) throw error;
+    await requireAdmin(request, env);
+  }
   const contentLength = Number(request.headers.get('Content-Length') || 0);
   if (contentLength > 1024 * 1024) throw new HttpError(413, 'Mỗi phần nhập PL không được vượt quá 1 MB.');
   const body = await request.json().catch(() => null);
@@ -632,7 +644,8 @@ async function importMaterials(request, env) {
       env.DB.prepare('INSERT INTO material_imports (id, project_code, source_file, expected_rows, next_row, expires_at, category) VALUES (?, ?, ?, ?, 0, ?, ?)')
         .bind(id, projectCode, filename, expectedRows, expiresAt, category),
     ]);
-    return json({ import_id: id, chunk_size: category === 'btp' ? BTP_CHUNK_SIZE : MATERIAL_CHUNK_SIZE, expected_rows: expectedRows, expires_at: expiresAt }, 201);
+    const chunkSize = Number(env.DB.materialImportChunkSize || (category === 'btp' ? BTP_CHUNK_SIZE : MATERIAL_CHUNK_SIZE));
+    return json({ import_id: id, chunk_size: chunkSize, expected_rows: expectedRows, expires_at: expiresAt }, 201);
   }
 
   if (body.action === 'clear-category') {
@@ -677,7 +690,7 @@ async function importMaterials(request, env) {
     }
     const isBtp = manifest.category === 'btp';
     const importColumns = isBtp ? BTP_IMPORT_COLUMNS : MATERIAL_IMPORT_COLUMNS;
-    const chunkSize = isBtp ? BTP_CHUNK_SIZE : MATERIAL_CHUNK_SIZE;
+    const chunkSize = Number(env.DB.materialImportChunkSize || (isBtp ? BTP_CHUNK_SIZE : MATERIAL_CHUNK_SIZE));
     if (!Array.isArray(body.records) || body.records.length < 1 || body.records.length > chunkSize
       || startRow + body.records.length > Number(manifest.expected_rows)) {
       throw new HttpError(400, `Mỗi phần phải có từ 1 đến ${chunkSize} dòng và không vượt tổng số dòng.`);
@@ -686,7 +699,7 @@ async function importMaterials(request, env) {
     const nextRow = startRow + records.length;
     const statements = [];
     const stagingColumns = ['import_id', 'row_index', ...importColumns];
-    const maxRowsPerInsert = Math.floor(96 / stagingColumns.length);
+    const maxRowsPerInsert = Math.max(1, Math.floor(Number(env.DB.maxBindParameters || 96) / stagingColumns.length));
     const stagingTable = isBtp ? 'btp_material_import_rows' : 'material_import_rows';
     for (let offset = 0; offset < records.length; offset += maxRowsPerInsert) {
       const group = records.slice(offset, offset + maxRowsPerInsert);
@@ -738,19 +751,19 @@ async function importMaterials(request, env) {
       env.DB.prepare('DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category = ? AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?)')
         .bind(manifest.project_code, manifest.source_file, isBtp ? 'btp' : 'materials', importId, runId),
     ];
-    const commitBatchSize = isBtp ? BTP_COMMIT_BATCH_SIZE : MATERIAL_COMMIT_BATCH_SIZE;
+    const commitBatchSize = Number(env.DB.materialCommitBatchSize || (isBtp ? BTP_COMMIT_BATCH_SIZE : MATERIAL_COMMIT_BATCH_SIZE));
     for (let startRow = 0; startRow < Number(manifest.expected_rows); startRow += commitBatchSize) {
       statements.push(isBtp ? env.DB.prepare(
         `INSERT INTO btp_materials (${BTP_COLUMNS.join(', ')}) SELECT ?, ?, source_sheet, source_row, part_no, material_type, description, material, unit, size, length_mm, unit_weight, total_weight, design_quantity, received, remaining, daily_progress, joint_check, status, note FROM btp_material_import_rows
          WHERE import_id = ? AND row_index >= ? AND row_index < ?
            AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
       ).bind(manifest.project_code, manifest.source_file, importId, startRow,
-        Math.min(startRow + BTP_COMMIT_BATCH_SIZE, Number(manifest.expected_rows)), importId, runId) : env.DB.prepare(
+        Math.min(startRow + commitBatchSize, Number(manifest.expected_rows)), importId, runId) : env.DB.prepare(
         `INSERT INTO materials (${insertColumns}) SELECT ?, ?, source_sheet, source_row, drawing, assembly, description, part_no, size, scope, quantity, weight, received, remaining, as_symbol, delivery_date, issue_dates, is_main, parent, status FROM material_import_rows
          WHERE import_id = ? AND row_index >= ? AND row_index < ?
            AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
       ).bind(manifest.project_code, manifest.source_file, importId, startRow,
-        Math.min(startRow + MATERIAL_COMMIT_BATCH_SIZE, Number(manifest.expected_rows)), importId, runId));
+        Math.min(startRow + commitBatchSize, Number(manifest.expected_rows)), importId, runId));
     }
     statements.push(
       env.DB.prepare('INSERT INTO import_runs (id, project_code, category, source_file, imported_rows) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?)')
@@ -792,6 +805,10 @@ async function route(request, env) {
   if (request.method === 'GET' && path === '/api/auth/me') {
     const user = await currentUser(request, env);
     return json({ user: user ? { id: user.id, username: user.username, role: user.role } : null });
+  }
+  if (request.method === 'GET' && path === '/api/admin/drive-sync/health') {
+    await requireDriveSync(request, env);
+    return json({ ok: true, scope: 'pl-btp-import' });
   }
   if (request.method === 'GET' && path === '/api/projects') {
     return json({ projects: await listProjects(env) });
