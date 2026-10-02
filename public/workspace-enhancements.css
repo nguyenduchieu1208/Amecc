@@ -34,6 +34,11 @@
 .material-chart-note { margin:10px 2px 0; color:var(--muted); font-size:10px; line-height:1.5; }
 .material-dashboard-invalid { margin:0 0 12px; }
 .material-dashboard-invalid .material-chart-empty { min-height:68px; color:#9a5d12; background:#fff7e8; border:1px solid #f4dfb5; }
+.project-catalog-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-8px 0 17px; }
+.project-catalog-search { width:min(460px,100%); max-width:none; height:42px; }
+.project-catalog-search input { font-size:12px; }
+.project-catalog-toolbar .count-chip { white-space:nowrap; }
+.project-catalog-empty { margin-top:12px; }
 .chart-point { cursor:pointer; }
 .chart-point:hover,.chart-point:focus-visible { r:7; stroke-width:3.5; outline:none; }
 .chart-bar-received,.chart-bar-shortage { cursor:pointer; }
@@ -77,6 +82,10 @@
   .audit-filter-grid { grid-template-areas:"project sheet" "date unit" "status status" "search search" "export export"; }
 }
 @media(max-width:580px) {
+  .project-catalog-toolbar { align-items:stretch; flex-direction:column; gap:8px; margin:-5px 0 13px; }
+  .project-catalog-search { width:100%; height:44px; }
+  .project-catalog-toolbar .count-chip { align-self:flex-start; }
+  .project-catalog-empty { padding:30px 14px; }
   .material-audit-controls { top:72px; margin:0 0 9px; padding:7px; border-radius:8px; }
   .mobile-audit-search-row { grid-template-columns:minmax(0,1fr) 82px; gap:6px; }
   .mobile-audit-filter-toggle { min-width:82px; padding:0 7px; font-size:10px; }

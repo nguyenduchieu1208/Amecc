@@ -23,6 +23,9 @@ function fmt(value) {
   if (typeof value === 'number') return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(value);
   return esc(value);
 }
+function normalizeProjectSearch(value) {
+  return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLocaleLowerCase('vi');
+}
 function applyTheme(theme) {
   if (!themes.includes(theme)) return;
   state.theme = theme;
@@ -81,9 +84,8 @@ function loadSpreadsheetLibrary() {
 }
 const projectDataRequests = new Map();
 let renderGeneration = 0;
-function currentPageTitle() { return ({ overview:'Tổng quan', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', projects:'Quản lý dự án', admin:'Quản trị tài khoản' })[state.page] || 'AMECC'; }
+function currentPageTitle() { return ({ overview:'Danh mục dự án', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', projects:'Quản lý dự án' })[state.page] || 'AMECC'; }
 function shell() {
-  const isAdmin = state.user?.role === 'admin';
   const navigation = `<div class="nav-label">KHÔNG GIAN LÀM VIỆC</div>
       <nav class="nav-list" aria-label="Điều hướng chính">
         <a class="nav-link ${state.page === 'overview' ? 'active' : ''}" href="#overview">${icon('overview')}<span>Tổng quan</span></a>
@@ -95,8 +97,7 @@ function shell() {
           <button class="nav-parent" type="button" data-group="projects" aria-expanded="${state.page === 'projects'}">${icon('projects')}<span>Quản lý dự án</span><span class="nav-chevron">${icon('chevron')}</span></button>
           <div class="nav-children"><a class="nav-child ${state.page === 'projects' ? 'active' : ''}" href="#projects">Tiến độ dự án</a></div>
         </div>
-      </nav>
-      ${isAdmin ? `<div class="nav-label admin-nav-label">QUẢN TRỊ</div><a class="nav-link ${state.page === 'admin' ? 'active' : ''}" href="${ADMIN_MODE ? '#admin' : './admin.html'}">${icon('admin')}<span>Cập nhật dữ liệu</span></a>` : ''}`;
+      </nav>`;
   app.innerHTML = `<div class="shell theme-${esc(state.theme)} ${state.sidebarCollapsed ? 'sidebar-collapsed' : ''}">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#overview" aria-label="AMECC - Trang tổng quan"><img src="./assets/logo.png" alt="AMECC"><span class="brand-caption">PROJECT CONTROL</span></a>
@@ -110,7 +111,7 @@ function shell() {
     <div class="mobile-scrim" id="scrim"></div>
     <main class="main-area">
       <header class="topbar"><button class="icon-button mobile-menu" id="mobileMenu" aria-label="Mở menu">${icon('menu')}</button><div><div class="top-eyebrow">AMECC <span>/</span> WORKSPACE</div><h1 id="pageTitle">${currentPageTitle()}</h1></div>
-        <div class="top-actions">${state.user ? `<span class="user-chip"><span class="avatar">${esc(state.user.username.slice(0,1).toUpperCase())}</span><span>${esc(state.user.username)}</span></span><button class="icon-button logout-button" id="logout" aria-label="Đăng xuất">${icon('logout')}</button>` : '<a class="button primary guest-login" href="./admin.html">Đăng nhập quản trị</a>'}</div>
+        <div class="top-actions"></div>
       </header><section id="page" class="page" aria-live="polite"></section>
     </main>
   </div>`;
@@ -183,13 +184,15 @@ function btpReceivedQuantity(row) {
   return remaining !== null && typeof row.design_quantity === 'number' ? Math.max(0, row.design_quantity - remaining) : null;
 }
 function overviewPage() {
-  const materialCount = state.projects.reduce((sum, project) => sum + Number(project.material_rows || 0) + Number(project.btp_rows || 0), 0);
-  const progressCount = state.projects.reduce((sum, project) => sum + Number(project.progress_rows || 0), 0);
-  return `${heading('AMECC · PROJECT OPERATIONS','Tổng quan vận hành','Không gian theo dõi vật tư sản xuất và tiến độ dự án từ workbook nguồn thực tế.')}
-    <section class="welcome-banner"><div><span class="banner-label">XIN CHÀO, ${esc(state.user.username.toUpperCase())}</span><h3>Điều hành dự án<br><em>trên một không gian duy nhất.</em></h3><p>Dữ liệu được phân quyền theo tài khoản và cập nhật từ workbook AMECC.</p></div><div class="banner-mark">A<span>.</span></div></section>
-    <div class="stats-grid">${statCard('Dự án đang quản lý',state.projects.length,'Dự án có dữ liệu đã nhập','blue')}${statCard('Dòng dữ liệu vật tư',materialCount,'Đọc từ workbook PL','red')}${statCard('Dòng tiến độ dự án',progressCount,'Đọc từ sheet Progress QLDA','green')}${statCard('Quyền truy cập',state.user.role === 'admin' ? 'Admin' : 'Viewer','Tài khoản hiện tại', 'gold')}</div>
-    <div class="section-heading"><div><span class="eyebrow">PROJECT PORTFOLIO</span><h3>Danh mục dự án</h3></div><span class="count-chip">${state.projects.length} dự án</span></div>
-    ${state.projects.length ? `<div class="project-grid">${[...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })).map((project) => `<article class="project-card"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">TÊN TỪ FILE NGUỒN</span><h4>${esc(projectFilenameLabel(project))}</h4><p>Mã dự án: ${esc(project.code)} · ${esc(project.source_file || `${project.code}.xlsx`)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions"><a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a><a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a></div></article>`).join('')}</div>` : '<div class="empty-state"><strong>Chưa có dữ liệu dự án</strong><p>Admin cần đăng nhập và nhập workbook PL/QLDA để bắt đầu.</p></div>'}`;
+  const projects = [...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' }));
+  const cards = projects.map((project) => {
+    const projectName = projectFilenameLabel(project);
+    const searchText = `${projectName} ${project.code} ${project.source_file || ''}`;
+    return `<article class="project-card" data-project-card data-project-search="${esc(searchText)}"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">DỰ ÁN</span><h4>${esc(projectName)}</h4><p>Mã dự án: ${esc(project.code)} · ${esc(project.source_file || `${project.code}.xlsx`)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions"><a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a><a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a></div></article>`;
+  }).join('');
+  return `${heading('AMECC · PROJECT PORTFOLIO','Danh mục dự án','Chọn một dự án để tra cứu vật tư hoặc theo dõi tiến độ.')}
+    <div class="project-catalog-toolbar"><label class="search-box project-catalog-search">${icon('search')}<input id="overviewProjectSearch" type="search" inputmode="search" autocomplete="off" placeholder="Tìm theo tên hoặc mã dự án…" aria-label="Tìm dự án"></label><span class="count-chip" id="overviewProjectCount">${projects.length} dự án</span></div>
+    ${projects.length ? `<div class="project-grid" id="overviewProjectGrid">${cards}</div><div class="empty-state project-catalog-empty" id="overviewProjectEmpty" hidden><strong>Không tìm thấy dự án</strong><p>Thử tìm bằng tên file hoặc mã dự án khác.</p></div>` : '<div class="empty-state"><strong>Chưa có dự án</strong><p>Chưa có dữ liệu dự án để hiển thị.</p></div>'}`;
 }
 function usableBtpRows() {
   const cache = materialAuditCache();
@@ -697,6 +700,20 @@ function bindPage() {
     }
   });
   document.querySelector('#projectSearch')?.addEventListener('input', () => { const page = document.querySelector('#page'); const position = window.scrollY; page.innerHTML = projectsPage(); bindPage(); window.scrollTo(0,position); });
+  document.querySelector('#overviewProjectSearch')?.addEventListener('input', (event) => {
+    const query = normalizeProjectSearch(event.currentTarget.value.trim());
+    const cards = [...document.querySelectorAll('[data-project-card]')];
+    let visible = 0;
+    for (const card of cards) {
+      const matches = !query || normalizeProjectSearch(card.dataset.projectSearch).includes(query);
+      card.hidden = !matches;
+      if (matches) visible += 1;
+    }
+    const count = document.querySelector('#overviewProjectCount');
+    if (count) count.textContent = query ? `${visible} / ${cards.length} dự án` : `${cards.length} dự án`;
+    const empty = document.querySelector('#overviewProjectEmpty');
+    if (empty) empty.hidden = visible > 0;
+  });
   document.querySelectorAll('[data-project]').forEach((link) => link.addEventListener('click', () => {
     if (state.currentProject !== link.dataset.project) {
       state.materialSelectedSheets = null;
@@ -1017,7 +1034,7 @@ async function initializeWorkspace() {
 }
 async function start() {
   if (!API_BASE || API_BASE.includes('REPLACE_WITH')) {
-    app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><h1>Chưa cấu hình dữ liệu</h1><p>Cần cấu hình địa chỉ API trong public/config.js để tải dữ liệu dự án.</p><a class="button primary" href="./admin.html">Trang quản trị</a></section></main>`;
+    app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><h1>Chưa cấu hình dữ liệu</h1><p>Cần cấu hình địa chỉ API trong public/config.js để tải dữ liệu dự án.</p></section></main>`;
     return;
   }
   if (ADMIN_MODE) {
@@ -1029,7 +1046,7 @@ async function start() {
     if (!state.user) { loginScreen(); return; }
   }
   try { await initializeWorkspace(); }
-  catch (error) { app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><h1>Không tải được dữ liệu</h1><p>${esc(error.message)}</p><a class="button primary" href="./admin.html">Trang quản trị</a><button class="button" onclick="location.reload()">Thử lại</button></section></main>`; }
+  catch (error) { app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><h1>Không tải được dữ liệu</h1><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Thử lại</button></section></main>`; }
 }
 window.addEventListener('hashchange', () => navigate());
 start();
