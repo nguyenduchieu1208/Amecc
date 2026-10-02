@@ -331,13 +331,38 @@ function btpColumns(header) {
   return columns;
 }
 
-function btpNumeric(value) {
+function normalizeImportNumber(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value !== 'string') return value;
-  const text = value.trim().replace(/,/g, '');
+  const text = value.trim().replace(/[\s\u00a0\u202f]/g, '').replace(/−/g, '-');
   if (!text) return null;
-  const number = Number(text);
+  if (/^[-–—]$/.test(text)) return null;
+  if (!/^[+-]?\d[\d.,]*$/.test(text)) return value.trim();
+
+  const sign = /^[+-]/.test(text) ? text[0] : '';
+  const unsigned = sign ? text.slice(1) : text;
+  const comma = unsigned.lastIndexOf(',');
+  const dot = unsigned.lastIndexOf('.');
+  let normalized = unsigned;
+  if (comma !== -1 && dot !== -1) {
+    const decimalIndex = Math.max(comma, dot);
+    normalized = `${unsigned.slice(0, decimalIndex).replace(/[.,]/g, '')}.${unsigned.slice(decimalIndex + 1)}`;
+  } else if (comma !== -1) {
+    const groups = unsigned.split(',');
+    if (groups.length > 2 && groups.slice(1).every((group) => group.length === 3)) normalized = groups.join('');
+    else normalized = `${groups.slice(0, -1).join('')}.${groups[groups.length - 1]}`;
+  } else if (dot !== -1 && unsigned.indexOf('.') !== dot) {
+    const groups = unsigned.split('.');
+    if (groups.slice(1).every((group) => group.length === 3)) normalized = groups.join('');
+    else normalized = `${groups.slice(0, -1).join('')}.${groups[groups.length - 1]}`;
+  }
+
+  const number = Number(`${sign}${normalized}`);
   return Number.isFinite(number) ? number : value.trim();
+}
+
+function btpNumeric(value) {
+  return normalizeImportNumber(value);
 }
 
 function btpHeaderIndex(rows) {
@@ -530,6 +555,9 @@ function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
       const fields = {};
       for (const [column, field] of Object.entries(sourceColumns.columns)) {
         fields[field] = normalizeValue(raw[Number(column) - 1]);
+      }
+      for (const field of ['quantity', 'weight', 'received', 'remaining']) {
+        fields[field] = normalizeImportNumber(fields[field]);
       }
       fields.part_no = normalizePartNumber(workbook.Sheets[sheetName], rowIndex, raw[4], xlsx);
       fields.scope = sourceColumns.scopeColumns.map((column) => normalizeValue(raw[column - 1])).find(Boolean) ?? fields.scope ?? null;

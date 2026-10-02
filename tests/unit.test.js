@@ -374,7 +374,7 @@ test('browser PL parser emits only approved import fields and preserves grouping
   const main = [];
   for (const [column, value] of [[2,'DWG-1'],[3,'ASM-1'],[4,'Main assembly'],[12,10],[20,4],[21,6],[28,'x']]) main[column - 1] = value;
   const component = [];
-  for (const [column, value] of [[2,'DWG-2'],[4,'Component'],[5,'P-2'],[7,'M20'],[12,4],[14,12],[20,2],[21,2]]) component[column - 1] = value;
+  for (const [column, value] of [[2,'DWG-2'],[4,'Component'],[5,'P-2'],[7,'M20'],[12,4],[14,'413,4'],[20,2],[21,2]]) component[column - 1] = value;
   component[4] = 12;
   const workbook = { SheetNames:['Cover','PL-1','BTP-PL-2'], Sheets:{ Cover:{}, 'PL-1':{}, 'BTP-PL-2':{} } };
   const parser = { utils:{ sheet_to_json:(sheet) => sheet === workbook.Sheets['PL-1']
@@ -388,6 +388,7 @@ test('browser PL parser emits only approved import fields and preserves grouping
   assert.equal(payload.records[0].is_main, 1);
   assert.equal(payload.records[1].parent, 'ASM-1');
   assert.equal(payload.records[1].part_no, '00012');
+  assert.equal(payload.records[1].weight, 413.4);
   assert.equal(payload.records[1].status, 'chưa đủ');
   assert.equal(payload.records[1].source_sheet, 'PL-1');
   assert.equal(Object.hasOwn(payload.records[1], 'project_code'), false);
@@ -396,7 +397,7 @@ test('browser PL parser emits only approved import fields and preserves grouping
 
 test('BTP parser recognizes detail headers, keeps dated progress, and excludes issue date fields', () => {
   const headers = ['Chủng loại','Part No.1','Size','Description','Length','Material',"T.Q'ty",'U.Weight','T.Weight','Đã nhận','SL Nhận','Còn thiếu','21/07',new Date('2026-07-23T00:00:00Z'),'Ktra nối','Lấy data','KO BB','Tôn','Cảnh báo thừa','DVG','MPR No','Qty MPR','Cutting No.','Qty Cutting','Date Issue','Ghi Chú'];
-  const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,2.4,4.8,0,1,1,3,1,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026','Kiểm tra ghi chú'];
+  const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,'2,4','4,8',0,1,1,3,1,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026','Kiểm tra ghi chú'];
   const workbook = { SheetNames:['BTP-A290T1P1'], Sheets:{ 'BTP-A290T1P1':{} } };
   const parser = { utils:{ sheet_to_json:() => [...Array.from({length:25}, () => []), headers, detail] } };
   const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
@@ -513,6 +514,8 @@ test('actual A290 workbook parses to a compact approved-field JSON payload', { s
   const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', xlsx);
   assert.equal(payload.records.length, 12688);
   assert.ok(payload.btp_records.length > 10000);
+  assert.ok(payload.records.some((row) => row.weight === 413.4), 'decimal-comma weights are parsed as numeric values');
+  assert.ok(payload.records.every((row) => ['quantity', 'weight', 'received', 'remaining'].every((field) => row[field] == null || typeof row[field] === 'number')));
   assert.equal(payload.records.some((row) => row.source_row === 9 && String(row.part_no).startsWith('5A')), false, 'column index headings are not material rows');
   assert.ok(payload.records.some((row) => row.is_main === 1));
   const receiptRecord = payload.records.find((row) => row.part_no === '6HH-43');
