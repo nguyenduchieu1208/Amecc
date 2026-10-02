@@ -455,6 +455,28 @@ test('PL parser detects shifted headers and maps receipt record dates, normalizi
   assert.equal(Object.hasOwn(records[0], 'issue_dates'), false);
 });
 
+test('PL parser does not treat populated non-quantity headers as numeric fallback columns', () => {
+  const workbook = { SheetNames:['SM1L1Tai cẩu'], Sheets:{ 'SM1L1Tai cẩu':{} } };
+  const header = [];
+  for (const [column, value] of [
+    [2,'Drawing Number'],[3,'Assembly No.'],[4,'Description'],[5,'Part No.'],[7,'Size'],[10,"Q'ty"],
+    [12,"T.Q'ty"],[13,'U.Weight'],[14,'T.Weight'],[16,'Scope of Work'],[17,'Unit Area (m2)'],
+    [18,'Total Area (m2)'],[19,'Paint loss percentage'],[20,'Scope of Painting Work'],[21,'Remark'],[22,'AS Symbol'],
+  ]) header[column - 1] = value;
+  const row = [];
+  for (const [column, value] of [
+    [2,'DWG-1'],[3,'ASM-1'],[4,'LIFTING LUGS'],[5,'PY-8000'],[7,'PL10*100'],[10,2],[12,2],[13,1.2],
+    [14,2.4],[16,'AMECC 2'],[17,0.15],[18,0.3],[19,34.5],[20,'PAC'],[22,'x'],
+  ]) row[column - 1] = value;
+  const parser = { utils:{ sheet_to_json:() => [...Array.from({length:7}, () => []), header, row] } };
+  const { records } = parseMaterialWorkbook(workbook, 'M270PL.xlsx', 'M270', parser);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].scope, 'AMECC 2');
+  assert.equal(records[0].received, undefined);
+  assert.equal(records[0].remaining, undefined);
+  assert.equal(records[0].status, 'chưa xác định');
+});
+
 test('PL parser ignores invalid receipt record dates and falls back to the delivery-date field', () => {
   const workbook = { SheetNames:['PL-1'], Sheets:{ 'PL-1':{} } };
   const header = ['Drawing Number', 'Description', 'Part No.', 'Scope of Work', 'Date Issue 1', 'Ngày giao', 'AS Symbol'];

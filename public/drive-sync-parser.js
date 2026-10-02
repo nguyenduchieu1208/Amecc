@@ -307,7 +307,8 @@ function materialColumns(header) {
   if (!scopeColumns.length && !columns[15] && !normalizeHeader(header[14])) scopeColumns.push(15);
   if (scopeColumns.length) columns[scopeColumns[0]] = 'scope';
   for (const [column, field] of Object.entries(MATERIAL_FIELDS)) {
-    if (!Object.values(columns).includes(field) && !columns[column]) columns[column] = field;
+    const headerValue = header[Number(column) - 1];
+    if (!Object.values(columns).includes(field) && !columns[column] && !normalizeHeader(headerValue)) columns[column] = field;
   }
   const deliveryDate = findMaterialHeader(header, ['ngaygiao', 'ngaygiaohang', 'deliverydate', 'dateofdelivery']);
   const receiptDates = header.flatMap((value, index) => {
