@@ -34,9 +34,9 @@
 .material-chart-note { margin:10px 2px 0; color:var(--muted); font-size:10px; line-height:1.5; }
 .material-dashboard-invalid { margin:0 0 12px; }
 .material-dashboard-invalid .material-chart-empty { min-height:68px; color:#9a5d12; background:#fff7e8; border:1px solid #f4dfb5; }
-.chart-point { cursor:help; }
+.chart-point { cursor:pointer; }
 .chart-point:hover,.chart-point:focus-visible { r:7; stroke-width:3.5; outline:none; }
-.chart-bar-received,.chart-bar-shortage { cursor:help; }
+.chart-bar-received,.chart-bar-shortage { cursor:pointer; }
 .chart-bar-received:hover,.chart-bar-shortage:hover,.chart-bar-received:focus-visible,.chart-bar-shortage:focus-visible { stroke:var(--ink); stroke-width:1.4; outline:none; }
 .mobile-audit-extra-filters,.mobile-audit-search-row { display:contents; }
 .mobile-audit-filter-toggle { display:none; }
