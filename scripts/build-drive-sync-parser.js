@@ -1,8 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
-const linkage = await readFile(new URL('../public/material-linkage.js', import.meta.url), 'utf8');
-const importer = await readFile(new URL('../public/material-import.js', import.meta.url), 'utf8');
+const normalizeLineEndings = (value) => value.replace(/\r\n?/g, '\n');
+const linkage = normalizeLineEndings(await readFile(new URL('../public/material-linkage.js', import.meta.url), 'utf8'));
+const importer = normalizeLineEndings(await readFile(new URL('../public/material-import.js', import.meta.url), 'utf8'));
 const linkedSource = linkage.replace(/^export\s+/gm, '');
 const parserSource = importer
   .replace(/^import\s+\{[^}]+\}\s+from\s+['"]\.\/material-linkage\.js['"];\s*/m, '')
