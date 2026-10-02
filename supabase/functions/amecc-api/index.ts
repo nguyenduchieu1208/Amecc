@@ -10,6 +10,7 @@ function getClient() {
   if (!connectionString) throw new Error('Supabase did not provide SUPABASE_DB_URL.');
   client = postgres(connectionString, {
     max: 1,
+    max_pipeline: 256,
     idle_timeout: 25,
     connect_timeout: 10,
     prepare: false,

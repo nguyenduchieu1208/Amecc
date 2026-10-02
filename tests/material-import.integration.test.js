@@ -83,7 +83,7 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     });
     assert.equal(begun.status, 201);
     const session = await begun.json();
-    assert.equal(session.chunk_size, 100);
+    assert.equal(session.chunk_size, 500);
 
     const earlyCommit = await post(env, token, { action: 'commit', import_id: session.import_id });
     assert.equal(earlyCommit.status, 409);

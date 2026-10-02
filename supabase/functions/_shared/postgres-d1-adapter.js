@@ -84,11 +84,7 @@ export class PostgresD1Adapter {
   }
 
   async batch(statements) {
-    return this.client.begin(async (transaction) => {
-      const results = [];
-      for (const statement of statements) results.push(await statement.execute(transaction));
-      return results;
-    });
+    return this.client.begin((transaction) => statements.map((statement) => statement.execute(transaction)));
   }
 }
 

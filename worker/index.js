@@ -12,8 +12,8 @@ const BTP_COLUMNS = [
   'size', 'length_mm', 'unit_weight', 'total_weight', 'design_quantity', 'received', 'remaining', 'daily_progress', 'joint_check', 'status', 'note',
 ];
 const BTP_IMPORT_COLUMNS = BTP_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
-const MATERIAL_CHUNK_SIZE = 100;
-const BTP_CHUNK_SIZE = 100;
+const MATERIAL_CHUNK_SIZE = 500;
+const BTP_CHUNK_SIZE = 500;
 const MATERIAL_INSERT_ROWS_PER_STATEMENT = Math.floor(96 / (MATERIAL_IMPORT_COLUMNS.length + 2));
 const MATERIAL_COMMIT_BATCH_SIZE = 500;
 const BTP_COMMIT_BATCH_SIZE = 500;
@@ -704,10 +704,6 @@ async function importMaterials(request, env) {
     const results = await env.DB.batch(statements);
     if (Number(results.at(-1)?.meta?.changes || 0) !== 1) {
       throw new HttpError(409, 'Phần nhập đã được xử lý hoặc phiên nhập đang hoàn tất.');
-    }
-    const current = await env.DB.prepare('SELECT next_row FROM material_imports WHERE id = ?').bind(importId).first();
-    if (!current || Number(current.next_row) !== nextRow) {
-      throw new HttpError(409, `Phần nhập chưa được ghi theo đúng thứ tự; dòng tiếp theo là ${current?.next_row ?? 0}.`);
     }
     return json({ import_id: importId, received_rows: nextRow });
   }

@@ -13,6 +13,7 @@ import { buildMaterialAuditRows, hasBtpIdentity, isPurchasingMaterialSheet, link
 import { buildBtpShortageTemplate, filterBtpRowsByReceiptDate } from '../public/shortage-export.js';
 import { fillTemplateWorkbook } from '../public/template-xlsx.js';
 import { unzipSync } from '../public/vendor/fflate.mjs';
+import { PostgresD1Adapter } from '../supabase/functions/_shared/postgres-d1-adapter.js';
 
 test('project codes are normalized and restricted to safe identifiers', () => {
   assert.equal(__test__.safeProjectCode(' a290 '), 'A290');
@@ -32,6 +33,40 @@ test('D1 free daily row limits return actionable retry messages instead of a gen
   assert.equal(readLimit.status, 429);
   assert.match(readLimit.message, /hết hạn mức đọc miễn phí/);
   assert.equal(__test__.workerErrorDetails(new Error('unexpected')).status, 500);
+});
+
+test('Supabase adapter pipelines batched SQL requests inside one transaction', async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const client = {
+    begin(callback) {
+      const transaction = {
+        async unsafe(statement, values) {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          inFlight -= 1;
+          return Object.assign([{ statement, values }], { count: 1 });
+        },
+      };
+      const pipeline = callback(transaction);
+      assert.ok(Array.isArray(pipeline), 'Postgres.js receives the statements together to pipeline them');
+      return Promise.all(pipeline);
+    },
+  };
+  const database = new PostgresD1Adapter(client);
+  const results = await database.batch([
+    database.prepare('INSERT INTO test_table (value) VALUES (?)').bind('one'),
+    database.prepare('UPDATE test_table SET value = ?').bind('two'),
+    database.prepare('DELETE FROM test_table WHERE value = ?').bind('three'),
+  ]);
+  assert.equal(maxInFlight, 3, 'all batched statements are issued without waiting a round-trip between them');
+  assert.deepEqual(results.map((result) => result.results[0].values[0]), ['one', 'two', 'three']);
+  assert.deepEqual(results.map((result) => result.results[0].statement), [
+    'INSERT INTO test_table (value) VALUES ($1)',
+    'UPDATE test_table SET value = $1',
+    'DELETE FROM test_table WHERE value = $1',
+  ]);
 });
 
 test('QLDA mapping exposes selected fields and excludes hidden source columns', () => {
@@ -448,7 +483,7 @@ test('PL staging chunks stay within D1 parameter limit and commit is atomic', as
   const btpMigration = readFileSync('migrations/0004_btp_materials.sql', 'utf8');
   const btpWeightMigration = readFileSync('migrations/0005_btp_unit_weight.sql', 'utf8');
   const btpDetailsMigration = readFileSync('migrations/0006_btp_bom_details.sql', 'utf8');
-  assert.equal(__test__.MATERIAL_CHUNK_SIZE, 100);
+  assert.equal(__test__.MATERIAL_CHUNK_SIZE, 500);
   assert.ok(__test__.MATERIAL_INSERT_ROWS_PER_STATEMENT * (__test__.MATERIAL_IMPORT_COLUMNS.length + 2) + 4 <= 100,
     'chunk inserts must stay below 100 bound parameters per statement');
   assert.ok(__test__.MATERIAL_COMMIT_BATCH_SIZE >= __test__.MATERIAL_CHUNK_SIZE);
