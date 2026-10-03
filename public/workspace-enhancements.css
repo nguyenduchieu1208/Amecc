@@ -115,3 +115,9 @@
 .import-file-progress-copy small { color:var(--muted); font-size:8px; line-height:1.4; overflow-wrap:anywhere; }
 .import-file-progress-item.error .import-file-progress-copy small { color:#b5473c; }
 @media(max-width:580px) { .import-file-progress { padding:10px; } .import-file-progress-head { align-items:flex-start; } .import-file-progress-copy strong { white-space:normal; } }
+
+.project-filter-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) minmax(175px,220px) auto; align-items:center; }
+.project-filter-toolbar .filter-label { gap:8px; }
+.project-filter-toolbar .filter-label select { flex:1; min-width:140px; }
+@media(max-width:1000px) { .project-filter-toolbar { grid-template-columns:minmax(0,1fr) minmax(175px,220px); } .project-filter-toolbar .source-chip { grid-column:1/-1; justify-self:start; } }
+@media(max-width:580px) { .project-filter-toolbar { grid-template-columns:minmax(0,1fr); gap:9px; } .project-filter-toolbar .filter-label { justify-content:space-between; } .project-filter-toolbar .filter-label select { min-width:0; } .project-filter-toolbar .source-chip { grid-column:auto; max-width:100%; } }

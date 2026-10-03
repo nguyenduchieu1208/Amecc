@@ -12,7 +12,7 @@ const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', projectLotFilter: '', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -26,6 +26,14 @@ function fmt(value) {
 function normalizeProjectSearch(value) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLocaleLowerCase('vi');
 }
+function projectLotCode(row) {
+  for (const field of ['mh','item','classification','allocation','drawing','part_no','note']) {
+    const match = String(row?.[field] ?? '').match(/\bLOT[\s_-]*([A-Z0-9]+)\b/i);
+    if (match) return `LOT${match[1].toUpperCase()}`;
+  }
+  return '';
+}
+function projectLotLabel(code) { return `Lot ${String(code).replace(/^LOT/i, '')}`; }
 function applyTheme(theme) {
   if (!themes.includes(theme)) return;
   state.theme = theme;
@@ -429,15 +437,25 @@ function materialDashboardPage() {
     ${renderMaterialDashboard(selectedRows, selectedLabel, chartRange)}`;
 }
 function projectsPage() {
-  const rows = state.data?.rows || [];
+  const rows = state.progressData?.rows || [];
   const query = document.querySelector('#projectSearch')?.value.trim().toLowerCase() || '';
-  const filtered = rows.filter((row) => !query || [row.item,row.drawing,row.part_no,row.profile,row.note].some((value) => String(value || '').toLowerCase().includes(query)));
-  const completed = rows.filter((row) => row.handover_qty != null && row.quantity != null && Number(row.handover_qty) >= Number(row.quantity)).length;
+  const lotOptions = [...new Set(rows.map(projectLotCode).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, 'vi', { numeric:true, sensitivity:'base' }));
+  const hasUnassignedLot = rows.some((row) => !projectLotCode(row));
+  const selectedLot = lotOptions.includes(state.projectLotFilter)
+    || (state.projectLotFilter === '__unassigned__' && hasUnassignedLot) ? state.projectLotFilter : '';
+  const filtered = rows.filter((row) => {
+    const lot = projectLotCode(row);
+    const matchesLot = !selectedLot || (selectedLot === '__unassigned__' ? !lot : lot === selectedLot);
+    const matchesSearch = !query || [row.item,row.mh,row.drawing,row.part_no,row.profile,row.note].some((value) => String(value || '').toLowerCase().includes(query));
+    return matchesLot && matchesSearch;
+  });
+  const completed = filtered.filter((row) => row.handover_qty != null && row.quantity != null && Number(row.handover_qty) >= Number(row.quantity)).length;
   const columns = progressColumns;
   return `${heading('PROJECT DELIVERY · QLDA','Quản lý tiến độ dự án','Theo dõi khối lượng theo hạng mục, cấu kiện và từng công đoạn sản xuất.',projectSelect())}
-    <div class="filter-toolbar"><label class="search-box">${icon('search')}<input id="projectSearch" placeholder="Tìm hạng mục, bản vẽ, mã cấu kiện…" value="${esc(query)}"></label><span class="source-chip">Nguồn: sheet Progress · header hàng 3 · dữ liệu từ hàng 4</span></div>
-    <div class="stats-grid compact">${statCard('Dòng tiến độ',rows.length,'Bản ghi trong workbook')}${statCard('Đã bàn giao',completed,'Theo SL bàn giao / T’Qty','green')}${statCard('Đang có dữ liệu',rows.filter((row) => row.fitup_qty != null || row.welding_qty != null || row.trial_assembly_qty != null).length,'Có ghi nhận sản xuất','gold')}${statCard('File nguồn',new Set(rows.map((row) => row.source_file)).size,'Workbook QLDA')}</div>
-    <div class="section-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Bảng tiến độ <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}</span></h3></div></div>
+    <div class="filter-toolbar project-filter-toolbar"><label class="search-box">${icon('search')}<input id="projectSearch" placeholder="Tìm hạng mục, bản vẽ, mã cấu kiện…" value="${esc(query)}"></label><label class="filter-label">Lot<select id="projectLotFilter" ${lotOptions.length || hasUnassignedLot ? '' : 'disabled'}><option value="">${lotOptions.length ? `Tất cả Lot (${lotOptions.length})` : 'Không phát hiện Lot'}</option>${lotOptions.map((lot) => `<option value="${esc(lot)}" ${selectedLot === lot ? 'selected' : ''}>${esc(projectLotLabel(lot))}</option>`).join('')}${hasUnassignedLot ? `<option value="__unassigned__" ${selectedLot === '__unassigned__' ? 'selected' : ''}>Chưa phân Lot</option>` : ''}</select></label><span class="source-chip">Nguồn: sheet Progress · header hàng 3 · dữ liệu từ hàng 4</span></div>
+    <div class="stats-grid compact">${statCard('Dòng tiến độ',filtered.length,'Theo bộ lọc hiện tại')}${statCard('Đã bàn giao',completed,'Theo SL bàn giao / T’Qty','green')}${statCard('Đang có dữ liệu',filtered.filter((row) => row.fitup_qty != null || row.welding_qty != null || row.trial_assembly_qty != null).length,'Có ghi nhận sản xuất','gold')}${statCard('File nguồn',new Set(filtered.map((row) => row.source_file).filter(Boolean)).size,'Workbook QLDA')}</div>
+    <div class="section-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Bảng tiến độ <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}${filtered.length !== rows.length ? ` / ${rows.length.toLocaleString('vi-VN')}` : ''}</span></h3></div></div>
     <div class="table-panel">${tableMarkup(filtered,columns,{limit:500})}</div><p class="footnote">Không nhập vào báo cáo: A, C–D, T–AI, AS và BB đến cột cuối (bắt đầu từ Check 1). Cột B chỉ dùng để xác định mã dự án.</p>`;
 }
 function adminPage() {
@@ -545,6 +563,7 @@ function bindPage() {
   updateImportFileMode();
   document.querySelector('#projectFilter')?.addEventListener('change', async (event) => {
     state.currentProject = event.target.value;
+    state.projectLotFilter = '';
     state.materialSelectedSheets = null;
     state.materialReceiptDateFilter = '';
     state.materialUnitFilter = '';
@@ -699,7 +718,9 @@ function bindPage() {
       button.disabled = filteredMaterialAuditRows().every((row) => !row.btp || !(getBtpShortageQuantity(row.btp) > 0));
     }
   });
-  document.querySelector('#projectSearch')?.addEventListener('input', () => { const page = document.querySelector('#page'); const position = window.scrollY; page.innerHTML = projectsPage(); bindPage(); window.scrollTo(0,position); });
+  const rerenderProjects = () => { const page = document.querySelector('#page'); const position = window.scrollY; page.innerHTML = projectsPage(); bindPage(); window.scrollTo(0,position); };
+  document.querySelector('#projectSearch')?.addEventListener('input', rerenderProjects);
+  document.querySelector('#projectLotFilter')?.addEventListener('change', (event) => { state.projectLotFilter = event.target.value; rerenderProjects(); });
   document.querySelector('#overviewProjectSearch')?.addEventListener('input', (event) => {
     const query = normalizeProjectSearch(event.currentTarget.value.trim());
     const cards = [...document.querySelectorAll('[data-project-card]')];
@@ -716,6 +737,7 @@ function bindPage() {
   });
   document.querySelectorAll('[data-project]').forEach((link) => link.addEventListener('click', () => {
     if (state.currentProject !== link.dataset.project) {
+      state.projectLotFilter = '';
       state.materialSelectedSheets = null;
       state.materialReceiptDateFilter = '';
       state.materialUnitFilter = '';
