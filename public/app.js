@@ -438,7 +438,7 @@ function projectsPage() {
     <div class="filter-toolbar"><label class="search-box">${icon('search')}<input id="projectSearch" placeholder="Tìm hạng mục, bản vẽ, mã cấu kiện…" value="${esc(query)}"></label><span class="source-chip">Nguồn: sheet Progress · header hàng 3 · dữ liệu từ hàng 4</span></div>
     <div class="stats-grid compact">${statCard('Dòng tiến độ',rows.length,'Bản ghi trong workbook')}${statCard('Đã bàn giao',completed,'Theo SL bàn giao / T’Qty','green')}${statCard('Đang có dữ liệu',rows.filter((row) => row.fitup_qty != null || row.welding_qty != null || row.trial_assembly_qty != null).length,'Có ghi nhận sản xuất','gold')}${statCard('File nguồn',new Set(rows.map((row) => row.source_file)).size,'Workbook QLDA')}</div>
     <div class="section-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Bảng tiến độ <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}</span></h3></div></div>
-    <div class="table-panel">${tableMarkup(filtered,columns,{limit:500})}</div><p class="footnote">Các cột đã loại khỏi báo cáo không được gửi tới trình duyệt. Cột AG–AI không đưa vào dữ liệu hiển thị.</p>`;
+    <div class="table-panel">${tableMarkup(filtered,columns,{limit:500})}</div><p class="footnote">Không nhập vào báo cáo: A, C–D, T–AI, AS và BB đến cột cuối (bắt đầu từ Check 1). Cột B chỉ dùng để xác định mã dự án.</p>`;
 }
 function adminPage() {
   return `${heading('ACCESS CONTROL · ADMIN','Quản trị tài khoản & dữ liệu','Tạo tài khoản chỉ xem và nhập dữ liệu thực từ workbook trên máy tính của bạn.')}

@@ -1,3 +1,5 @@
+// Column whitelist: only mapped fields are copied. This excludes A, C:D, T:AI, AS,
+// and (with the range cap below) BB onward, including every file-specific Check column.
 const QLDA_FIELDS = {
   2: 'project_code', 5: 'item', 6: 'mh', 7: 'wo_date', 8: 'product_type',
   9: 'classification', 10: 'allocation', 11: 'drawing', 12: 'part_no', 13: 'size',
@@ -8,6 +10,7 @@ const QLDA_FIELDS = {
   47: 'acceptance_qty', 48: 'acceptance_weight', 49: 'handover_date', 50: 'handover_qty',
   51: 'handover_weight', 52: 'receiver', 53: 'record_no',
 };
+const QLDA_IMPORT_LAST_COLUMN = 53; // BA; BB onward contains file-specific Check columns and is excluded.
 
 function normalizeValue(value) {
   if (value instanceof Date) return value.toISOString().slice(0, 10);
@@ -26,11 +29,14 @@ export async function readProjectWorkbook(file, xlsx = window.XLSX) {
   }
   const sheet = workbook.Sheets?.Progress;
   if (!sheet) throw new Error('Workbook QLDA cần có sheet Progress.');
-  const sourceRows = xlsx.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true });
+  const sourceRange = sheet['!ref'] && typeof xlsx.utils.decode_range === 'function'
+    ? xlsx.utils.decode_range(sheet['!ref']) : null;
+  if (sourceRange) sourceRange.e.c = Math.min(sourceRange.e.c, QLDA_IMPORT_LAST_COLUMN - 1);
+  const sourceRows = xlsx.utils.sheet_to_json(sheet, { ...(sourceRange ? { range:sourceRange } : {}), header: 1, raw: true, defval: null, blankrows: true });
   const records = [];
   for (let index = 3; index < sourceRows.length; index += 1) {
     const raw = sourceRows[index];
-    if (!raw.slice(0, 53).some((value) => value !== null && value !== undefined && value !== '')) continue;
+    if (!raw.slice(0, QLDA_IMPORT_LAST_COLUMN).some((value) => value !== null && value !== undefined && value !== '')) continue;
     const mapped = {};
     for (const [column, field] of Object.entries(QLDA_FIELDS)) mapped[field] = normalizeValue(raw[Number(column) - 1]);
     if (![mapped.project_code, mapped.drawing, mapped.part_no, mapped.item].some((value) => value !== null && value !== undefined)) continue;
