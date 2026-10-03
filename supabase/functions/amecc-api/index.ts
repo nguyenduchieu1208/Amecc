@@ -41,6 +41,13 @@ Deno.serve(async (request) => {
     return await worker.fetch(routedRequest, env);
   } catch (error) {
     console.error('AMECC Supabase API failed', error);
+    const driveSyncToken = Deno.env.get('DRIVE_SYNC_TOKEN') || '';
+    const isDriveSyncRequest = Boolean(driveSyncToken)
+      && request.headers.get('Authorization') === `Bearer ${driveSyncToken}`;
+    if (isDriveSyncRequest) {
+      const detail = String(error instanceof Error ? `${error.name}: ${error.message}` : error).slice(0, 900);
+      return Response.json({ error: 'Lỗi máy chủ khi xử lý yêu cầu.', detail }, { status: 500 });
+    }
     return Response.json({ error: 'Lỗi máy chủ khi xử lý yêu cầu.' }, { status: 500 });
   }
 });
