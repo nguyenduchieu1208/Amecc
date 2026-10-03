@@ -580,7 +580,7 @@ async function importProjectRows(request, env) {
       env.DB.prepare('UPDATE project_imports SET committed = 1, commit_token = ? WHERE id = ? AND committed = 0 AND next_row = ? AND (SELECT COUNT(*) FROM project_progress_import_rows WHERE import_id = ?) = ?')
         .bind(runId, importId, manifest.expected_rows, importId, manifest.expected_rows),
       env.DB.prepare(`INSERT INTO projects (code, name, source_file, updated_at)
-        SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_imports WHERE id = ? AND committed = 1 AND commit_token = ?)
+        SELECT ?, ?, ?, CAST(? AS TIMESTAMPTZ) WHERE EXISTS (SELECT 1 FROM project_imports WHERE id = ? AND committed = 1 AND commit_token = ?)
         ON CONFLICT(code) DO UPDATE SET source_file = excluded.source_file, updated_at = excluded.updated_at`)
         .bind(manifest.project_code, manifest.project_code, manifest.source_file, now, importId, runId),
       env.DB.prepare('DELETE FROM project_progress WHERE project_code = ? AND EXISTS (SELECT 1 FROM project_imports WHERE id = ? AND committed = 1 AND commit_token = ?)')
@@ -589,7 +589,7 @@ async function importProjectRows(request, env) {
         SELECT ?, ?, source_row, ${sourceColumns} FROM project_progress_import_rows
         WHERE import_id = ? AND EXISTS (SELECT 1 FROM project_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`)
         .bind(manifest.project_code, manifest.source_file, importId, importId, runId),
-      env.DB.prepare('INSERT INTO import_runs (id, project_code, category, source_file, imported_rows) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_imports WHERE id = ? AND committed = 1 AND commit_token = ?)')
+      env.DB.prepare('INSERT INTO import_runs (id, project_code, category, source_file, imported_rows) SELECT ?, ?, ?, ?, CAST(? AS INTEGER) WHERE EXISTS (SELECT 1 FROM project_imports WHERE id = ? AND committed = 1 AND commit_token = ?)')
         .bind(runId, manifest.project_code, 'projects', manifest.source_file, manifest.expected_rows, importId, runId),
       env.DB.prepare('UPDATE project_imports SET committed = 2 WHERE id = ? AND committed = 1 AND commit_token = ?').bind(importId, runId),
       env.DB.prepare('DELETE FROM project_progress_import_rows WHERE import_id = ? AND EXISTS (SELECT 1 FROM project_imports WHERE id = ? AND committed = 2 AND commit_token = ?)')
