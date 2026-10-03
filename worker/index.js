@@ -548,7 +548,7 @@ async function importProjectRows(request, env) {
     const records = validateImportRecords(body.records, PROJECT_IMPORT_COLUMNS, manifest.project_code, manifest.source_file, 'projects');
     const nextRow = startRow + records.length;
     const stagingColumns = ['import_id', 'row_index', ...PROJECT_IMPORT_COLUMNS];
-    const maxRowsPerInsert = Math.max(1, Math.floor(96 / stagingColumns.length));
+    const maxRowsPerInsert = Math.max(1, Math.floor(Number(env.DB.maxBindParameters || 96) / stagingColumns.length));
     const statements = [];
     for (let offset = 0; offset < records.length; offset += maxRowsPerInsert) {
       const group = records.slice(offset, offset + maxRowsPerInsert);
