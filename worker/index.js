@@ -440,14 +440,19 @@ async function deletePlFile(request, env) {
 }
 
 async function importWorkbook(request, env, category) {
+  const contentType = request.headers.get('Content-Type') || '';
+  if (category === 'projects' && contentType.toLowerCase().includes('application/json')) {
+    try { await requireDriveSync(request, env); }
+    catch (error) {
+      if (!(error instanceof HttpError) || error.status !== 401) throw error;
+      await requireAdmin(request, env);
+    }
+    return importProjectRows(request, env);
+  }
   await requireAdmin(request, env);
   const contentLength = Number(request.headers.get('Content-Length') || 0);
   const maxBytes = Math.min(Number(env.MAX_UPLOAD_BYTES || MAX_FILE_BYTES), MAX_FILE_BYTES);
   if (contentLength > maxBytes) throw new HttpError(413, 'File vượt quá giới hạn 20 MB.');
-  const contentType = request.headers.get('Content-Type') || '';
-  if (category === 'projects' && contentType.toLowerCase().includes('application/json')) {
-    return importProjectRows(request, env);
-  }
   if (category === 'projects') throw new HttpError(415, 'QLDA cần được đọc trong trình duyệt; hãy tải lại trang quản trị rồi thử lại.');
   let projectCode;
   let filename;
@@ -808,7 +813,7 @@ async function route(request, env) {
   }
   if (request.method === 'GET' && path === '/api/admin/drive-sync/health') {
     await requireDriveSync(request, env);
-    return json({ ok: true, scope: 'pl-btp-import' });
+    return json({ ok: true, scope: 'pl-btp-qlda-import' });
   }
   if (request.method === 'GET' && path === '/api/projects') {
     return json({ projects: await listProjects(env) });

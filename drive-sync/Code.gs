@@ -8,22 +8,26 @@ const AMECC_SYNC = Object.freeze({
   runBudgetMs: 5 * 60 * 1000,
 });
 
-const AMECC_PARSER_SHA256 = '56564acdd0e822e1f99f36372e7cf0bfe0daa52514f744773b546b413eb82b18';
+const AMECC_PARSER_SHA256 = '8a39ea9a8584b47848daac648a002cb65c58f17e9d4866d508bbddb3e965641d';
 const AMECC_XLSX_SHA256 = 'c9506197caf809a075b6dee1da0d36fb19da7158ffe8a88e7b0c96c5d8623c99';
 const AMECC_FOLDER_PROPERTY = 'AMECC_DRIVE_FOLDER_ID';
+const AMECC_QLDA_FOLDER_PROPERTY = 'AMECC_QLDA_DRIVE_FOLDER_ID';
+const AMECC_DEFAULT_QLDA_FOLDER_ID = '1418VlFe3m3mgA-81jgJ8F5vetAev9qKG';
 const AMECC_TOKEN_PROPERTY = 'AMECC_DRIVE_SYNC_TOKEN';
 const AMECC_SYNCED_PREFIX = 'AMECC_SYNCED_';
 const AMECC_FAILED_PREFIX = 'AMECC_FAILED_';
 
-/** Run once from the Apps Script editor after setting the two Script Properties. */
+/** Run once from the Apps Script editor after setting the Drive and sync token Script Properties. */
 function setupAmeccDriveSync() {
   const properties = PropertiesService.getScriptProperties();
   const folderId = String(properties.getProperty(AMECC_FOLDER_PROPERTY) || '').trim();
+  const qldaFolderId = String(properties.getProperty(AMECC_QLDA_FOLDER_PROPERTY) || AMECC_DEFAULT_QLDA_FOLDER_ID).trim();
   const token = String(properties.getProperty(AMECC_TOKEN_PROPERTY) || '').trim();
   if (!folderId || !token) {
     throw new Error(`Set Script Properties ${AMECC_FOLDER_PROPERTY} and ${AMECC_TOKEN_PROPERTY} before setup.`);
   }
   DriveApp.getFolderById(folderId).getName();
+  DriveApp.getFolderById(qldaFolderId).getName();
   assertSyncApiReady_(token);
   const parserXlsx = loadXlsx_();
   loadParser_(parserXlsx);
@@ -56,7 +60,7 @@ function assertSyncApiReady_(syncToken) {
   }
 }
 
-/** Trigger entry point. Imports changed PL workbooks and safely retries failures. */
+/** Trigger entry point. Imports changed PL/BTP and QLDA workbooks and safely retries failures. */
 function syncAmeccDrive() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) {
@@ -67,12 +71,16 @@ function syncAmeccDrive() {
   try {
     const properties = PropertiesService.getScriptProperties();
     const folderId = String(properties.getProperty(AMECC_FOLDER_PROPERTY) || '').trim();
+    const qldaFolderId = String(properties.getProperty(AMECC_QLDA_FOLDER_PROPERTY) || AMECC_DEFAULT_QLDA_FOLDER_ID).trim();
     const syncToken = String(properties.getProperty(AMECC_TOKEN_PROPERTY) || '').trim();
-    if (!folderId || !syncToken) throw new Error('Drive folder ID or sync token is missing from Script Properties.');
+    if (!folderId || !qldaFolderId || !syncToken) throw new Error('One or more Drive folder IDs or the sync token are missing.');
 
-    const pending = findPendingFiles_(DriveApp.getFolderById(folderId), properties);
+    const pending = [
+      ...findPendingFiles_(DriveApp.getFolderById(folderId), 'materials', properties),
+      ...findPendingFiles_(DriveApp.getFolderById(qldaFolderId), 'projects', properties),
+    ].sort((left, right) => left.category.localeCompare(right.category) || left.file.getName().localeCompare(right.file.getName(), 'en', { numeric: true }));
     if (!pending.length) return;
-    console.log(`Found ${pending.length} changed PL workbook(s).`);
+    console.log(`Found ${pending.length} changed workbook(s) across PL/BTP and QLDA folders.`);
     const xlsx = loadXlsx_();
     const parser = loadParser_(xlsx);
 
@@ -86,12 +94,15 @@ function syncAmeccDrive() {
         properties.setProperty(AMECC_SYNCED_PREFIX + entry.file.getId(), JSON.stringify({
           signature: entry.signature,
           fileName: entry.file.getName(),
+          category: entry.category,
           syncedAt: new Date().toISOString(),
           materialRows: summary.materialRows,
           btpRows: summary.btpRows,
+          projectRows: summary.projectRows,
         }));
         properties.deleteProperty(AMECC_FAILED_PREFIX + entry.file.getId());
-        console.log(`DONE ${entry.file.getName()}: ${summary.materialRows} PL + ${summary.btpRows} BTP row(s).`);
+        if (entry.category === 'projects') console.log(`DONE ${entry.file.getName()}: ${summary.projectRows} QLDA row(s).`);
+        else console.log(`DONE ${entry.file.getName()}: ${summary.materialRows} PL + ${summary.btpRows} BTP row(s).`);
       } catch (error) {
         const message = String(error && error.message ? error.message : error).slice(0, 1500);
         properties.setProperty(AMECC_FAILED_PREFIX + entry.file.getId(), JSON.stringify({
@@ -115,13 +126,16 @@ function resetAmeccDriveSyncFailures() {
   console.log('Cleared saved failure backoff. Failed files will be retried by the next sync.');
 }
 
-function findPendingFiles_(folder, properties) {
+function findPendingFiles_(folder, category, properties) {
   const candidates = [];
   const nameCounts = new Map();
   const iterator = folder.getFiles();
   while (iterator.hasNext()) {
     const file = iterator.next();
-    if (!/^[\w.-]+PL\.xlsx$/i.test(file.getName())) continue;
+    const eligible = category === 'projects'
+      ? /^[\w.-]+\.xlsx$/i.test(file.getName()) && !/PL\.xlsx$/i.test(file.getName())
+      : /^[\w.-]+PL\.xlsx$/i.test(file.getName());
+    if (!eligible) continue;
     const normalizedName = file.getName().toLocaleLowerCase();
     nameCounts.set(normalizedName, (nameCounts.get(normalizedName) || 0) + 1);
     const updated = file.getLastUpdated().getTime();
@@ -130,7 +144,7 @@ function findPendingFiles_(folder, properties) {
     if (previous && previous.signature === signature) continue;
     const failure = parseProperty_(properties.getProperty(AMECC_FAILED_PREFIX + file.getId()));
     if (failure && failure.signature === signature && Number(failure.retryAfter) > Date.now()) continue;
-    candidates.push({ file, signature });
+    candidates.push({ file, signature, category });
   }
 
   const unique = candidates.filter(({ file }) => {
@@ -146,12 +160,30 @@ function importDriveFile_(entry, parser, xlsx, syncToken, properties) {
   const file = entry.file;
   const fileName = file.getName();
   const fileId = file.getId();
+  if (entry.category === 'projects') {
+    const stateKey = `${AMECC_SYNCED_PREFIX}${fileId}_projects`;
+    const state = parseProperty_(properties.getProperty(stateKey));
+    if (state?.signature === entry.signature) return { projectRows: Number(state.rows || 0) };
+    const size = file.getSize();
+    if (size <= 0) throw new Error('Workbook is empty.');
+    if (size > AMECC_SYNC.maxFileBytes) throw new Error(`Workbook exceeds ${AMECC_SYNC.maxFileBytes / 1024 / 1024} MB.`);
+    console.log(`READ QLDA ${fileName} (${(size / 1024 / 1024).toFixed(2)} MB).`);
+    const bytes = new Uint8Array(file.getBlob().getBytes());
+    if (bytes.byteLength !== size) throw new Error('Downloaded byte count does not match Drive file size.');
+    const projectCode = parser.projectCodeFromFilename(fileName, 'projects');
+    const workbook = xlsx.read(bytes, { type: 'array', cellDates: true, bookVBA: false });
+    const records = parser.parseProjectWorkbook(workbook, fileName, projectCode, xlsx);
+    importCategory_({ project_code: projectCode, filename: fileName }, 'projects', records, syncToken);
+    properties.setProperty(stateKey, JSON.stringify({ signature: entry.signature, rows: records.length }));
+    return { projectRows: records.length };
+  }
+
   const materialStateKey = `${AMECC_SYNCED_PREFIX}${fileId}_materials`;
   const btpStateKey = `${AMECC_SYNCED_PREFIX}${fileId}_btp`;
   const materialState = parseProperty_(properties.getProperty(materialStateKey));
   const btpState = parseProperty_(properties.getProperty(btpStateKey));
   if (materialState?.signature === entry.signature && btpState?.signature === entry.signature) {
-    return { materialRows: Number(materialState.rows || 0), btpRows: Number(btpState.rows || 0) };
+    return { materialRows: Number(materialState.rows || 0), btpRows: Number(btpState.rows || 0), projectRows: 0 };
   }
   const size = file.getSize();
   if (size <= 0) throw new Error('Workbook is empty.');
@@ -170,12 +202,14 @@ function importDriveFile_(entry, parser, xlsx, syncToken, properties) {
     importCategory_(payload, 'btp', payload.btp_records, syncToken);
     properties.setProperty(btpStateKey, JSON.stringify({ signature: entry.signature, rows: payload.btp_records.length }));
   }
-  return { materialRows: payload.records.length, btpRows: payload.btp_records.length };
+  return { materialRows: payload.records.length, btpRows: payload.btp_records.length, projectRows: 0 };
 }
 
 function importCategory_(payload, category, records, syncToken) {
+  const send = (body) => apiJson_(body, syncToken, category);
   if (!records.length) {
-    apiJson_({
+    if (category === 'projects') throw new Error(`Không tìm thấy dòng QLDA hợp lệ trong ${payload.filename}; dữ liệu cũ được giữ nguyên.`);
+    send({
       action: 'clear-category', category,
       project_code: payload.project_code,
       filename: payload.filename,
@@ -183,7 +217,7 @@ function importCategory_(payload, category, records, syncToken) {
     return;
   }
 
-  const session = apiJson_({
+  const session = send({
     action: 'begin', category,
     project_code: payload.project_code,
     filename: payload.filename,
@@ -200,25 +234,26 @@ function importCategory_(payload, category, records, syncToken) {
         count = Math.floor(count / 2);
       }
       if (count < 1) throw new Error(`A row near ${start + 1} is too large to import safely.`);
-      apiJson_(body, syncToken);
+      send(body);
       start += count;
       if (start % 5000 === 0 || start === records.length) {
         console.log(`${payload.filename} · ${category}: ${start}/${records.length} row(s).`);
       }
     }
-    apiJson_({ action: 'commit', import_id: session.import_id }, syncToken);
+    send({ action: 'commit', import_id: session.import_id });
   } catch (error) {
-    try { apiJson_({ action: 'abort', import_id: session.import_id }, syncToken); } catch (_) { /* Expired sessions are cleaned up automatically. */ }
+    try { send({ action: 'abort', import_id: session.import_id }); } catch (_) { /* Expired sessions are cleaned up automatically. */ }
     throw error;
   }
 }
 
-function apiJson_(payload, syncToken) {
+function apiJson_(payload, syncToken, category) {
   const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const response = UrlFetchApp.fetch(`${AMECC_SYNC.apiBaseUrl}/api/admin/import/materials`, {
+      const endpoint = category === 'projects' ? '/api/admin/import/projects' : '/api/admin/import/materials';
+      const response = UrlFetchApp.fetch(`${AMECC_SYNC.apiBaseUrl}${endpoint}`, {
         method: 'post',
         contentType: 'application/json',
         payload: body,

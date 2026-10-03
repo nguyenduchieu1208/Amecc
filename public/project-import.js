@@ -19,16 +19,14 @@ function normalizeValue(value) {
   return null;
 }
 
-export async function readProjectWorkbook(file, xlsx = window.XLSX) {
+export function parseProjectWorkbook(workbook, filename, projectCode, xlsx = window.XLSX) {
   if (!xlsx?.read || !xlsx?.utils?.sheet_to_json) throw new Error('Không tải được thư viện đọc Excel; hãy tải lại trang rồi thử lại.');
-  let workbook;
-  try {
-    workbook = xlsx.read(await file.arrayBuffer(), { type: 'array', cellDates: true, bookVBA: false });
-  } catch {
-    throw new Error(`Không đọc được workbook ${file.name}.`);
+  const filenameCode = String(filename || '').replace(/\.xlsx$/i, '').trim().toUpperCase();
+  if (!filenameCode || String(projectCode || '').trim().toUpperCase() !== filenameCode) {
+    throw new Error('Tên file QLDA không khớp mã dự án.');
   }
   const sheet = workbook.Sheets?.Progress;
-  if (!sheet) throw new Error('Workbook QLDA cần có sheet Progress.');
+  if (!sheet) throw new Error(`Workbook QLDA ${filename || ''} cần có sheet Progress.`.trim());
   const sourceRange = sheet['!ref'] && typeof xlsx.utils.decode_range === 'function'
     ? xlsx.utils.decode_range(sheet['!ref']) : null;
   if (sourceRange) sourceRange.e.c = Math.min(sourceRange.e.c, QLDA_IMPORT_LAST_COLUMN - 1);
@@ -45,4 +43,17 @@ export async function readProjectWorkbook(file, xlsx = window.XLSX) {
   }
   if (!records.length) throw new Error('Không tìm thấy dòng QLDA hợp lệ trong sheet Progress.');
   return records;
+}
+
+export async function readProjectWorkbook(file, xlsx = window.XLSX) {
+  if (!xlsx?.read || !xlsx?.utils?.sheet_to_json) throw new Error('Không tải được thư viện đọc Excel; hãy tải lại trang rồi thử lại.');
+  let workbook;
+  try {
+    workbook = xlsx.read(await file.arrayBuffer(), { type: 'array', cellDates: true, bookVBA: false });
+  } catch {
+    throw new Error(`Không đọc được workbook ${file.name}.`);
+  }
+  const filename = String(file.name || '');
+  const projectCode = filename.replace(/\.xlsx$/i, '').trim().toUpperCase();
+  return parseProjectWorkbook(workbook, filename, projectCode, xlsx);
 }

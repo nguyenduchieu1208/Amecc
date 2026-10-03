@@ -1,6 +1,6 @@
 # AMECC Drive sync
 
-This Apps Script watches the private Drive folder and imports only changed `*PL.xlsx` files. It reads the workbooks with the same parser as the website, skips the `Purchasing` sheet, sends PL/BTP rows in safe chunks, and replaces the existing rows for each same-named file. It does not copy the original Excel files to GitHub or Supabase Storage.
+This Apps Script watches the two private Drive folders and imports changed `*PL.xlsx` files from **Data** plus `.xlsx` project workbooks from **QLDA**. It reads both workbook types with the same parsers used by the website, skips the `Purchasing` sheet in PL workbooks, sends rows in safe chunks, and replaces the imported rows for each same-named source file. It does not copy the original Excel files to GitHub or Supabase Storage.
 
 ## One-time setup
 
@@ -10,13 +10,14 @@ This Apps Script watches the private Drive folder and imports only changed `*PL.
 4. In **Project Settings → Script Properties**, add:
    - `AMECC_DRIVE_FOLDER_ID` = `13DHt0iRys8IqultlVc0WDMlvv2IDq8E6`
    - `AMECC_DRIVE_SYNC_TOKEN` = the same token stored in Supabase
+   - `AMECC_QLDA_DRIVE_FOLDER_ID` = `1418VlFe3m3mgA-81jgJ8F5vetAev9qKG` (optional; this folder is the default)
 5. Run `setupAmeccDriveSync` once and approve the Google Drive read-only and external-request permissions. It installs a one-minute trigger and starts the first sync.
 
-The first run scans all eligible files. Changed workbooks are retried if an API request fails; successful files are skipped until their Drive modification time or size changes. Check **Apps Script → Executions** for per-file `DONE` or `FAILED` records. `resetAmeccDriveSyncFailures` clears retry delays when you have corrected a permanent configuration issue.
+The first run scans all eligible files in both folders. Changed workbooks are retried if an API request fails; successful files are skipped until their Drive modification time or size changes. Check **Apps Script → Executions** for per-file `DONE` or `FAILED` records. `resetAmeccDriveSyncFailures` clears retry delays when you have corrected a permanent configuration issue.
 
 Use `stopAmeccDriveSync` to remove the time trigger. It leaves the data already imported on the site unchanged. When the site's workbook parser changes, run `npm run drive-sync:bundle` before deploying Pages so the pinned parser asset and its integrity hashes stay aligned.
 
-The importer currently accepts `.xlsx` files up to 20 MiB, matching the largest source file observed in the folder. A Google Apps Script execution is limited to six minutes, so an initial sync may continue on the next one-minute trigger if it reaches its per-run time budget; it does not promise all 13 files in one minute. Later updates normally send only the changed file.
+The importer currently accepts `.xlsx` files up to 20 MiB. A Google Apps Script execution is limited to six minutes, so the initial sync of 13 PL and 21 QLDA files may continue on later one-minute triggers if it reaches its per-run time budget. Later updates normally send only changed files.
 
 ## Token setup using Supabase CLI
 
