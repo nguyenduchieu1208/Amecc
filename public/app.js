@@ -27,8 +27,11 @@ function normalizeProjectSearch(value) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLocaleLowerCase('vi');
 }
 function projectLotCode(row) {
-  for (const field of ['mh','item','classification','allocation','drawing','part_no','note']) {
-    const match = String(row?.[field] ?? '').match(/\bLOT[\s_-]*([A-Z0-9]+)\b/i);
+  // Lot is project metadata in QLDA (normally MH or Hạng mục). Do not
+  // classify part numbers, drawings, or notes as Lots just because they
+  // contain the text "LOT".
+  for (const field of ['mh','item','classification','allocation']) {
+    const match = String(row?.[field] ?? '').match(/\bLOT[\s_-]*(\d+)\b/i);
     if (match) return `LOT${match[1].toUpperCase()}`;
   }
   return '';
@@ -41,8 +44,6 @@ function materialAuditLotCodes(row) {
   for (const sheet of sourceSheets) {
     const explicitLot = projectLotCode({ mh:sheet });
     if (explicitLot) return [explicitLot];
-    const suffixLot = String(sheet || '').match(/L([0-9]+)$/i);
-    if (suffixLot) return [`LOT${suffixLot[1]}`];
   }
   return [];
 }
