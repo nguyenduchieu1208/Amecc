@@ -198,7 +198,14 @@ function projectFilenameLabel(project) {
   const filename = String(project?.source_file || `${project?.code || ''}.xlsx`).trim();
   return filename.replace(/(?:PL)?\.xlsx$/i, '') || project?.code || '';
 }
-function projectSelect() { const projects = [...state.projects].sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' })); return `<label class="filter-label">Dự án<select id="projectFilter"><option value="">Chọn dự án</option>${projects.map((project) => `<option value="${esc(project.code)}" ${state.currentProject === project.code ? 'selected' : ''}>${esc(projectFilenameLabel(project))}</option>`).join('')}</select></label>`; }
+function projectsForData(scope = 'all') {
+  const hasMaterials = (project) => Number(project.material_rows || 0) + Number(project.btp_rows || 0) > 0;
+  const hasProgress = (project) => Number(project.progress_rows || 0) > 0;
+  return [...state.projects]
+    .filter((project) => scope === 'materials' ? hasMaterials(project) : scope === 'progress' ? hasProgress(project) : true)
+    .sort((left, right) => String(left.code).localeCompare(String(right.code), 'vi', { numeric:true, sensitivity:'base' }));
+}
+function projectSelect(scope = 'all') { const projects = projectsForData(scope); return `<label class="filter-label">Dự án<select id="projectFilter"><option value="">Chọn dự án</option>${projects.map((project) => `<option value="${esc(project.code)}" ${state.currentProject === project.code ? 'selected' : ''}>${esc(projectFilenameLabel(project))}</option>`).join('')}</select></label>`; }
 function btpReceivedQuantity(row) {
   if (typeof row.received === 'number') return Math.max(0, row.received);
   const remaining = getBtpShortageQuantity(row);
@@ -209,7 +216,11 @@ function overviewPage() {
   const cards = projects.map((project) => {
     const projectName = projectFilenameLabel(project);
     const searchText = `${projectName} ${project.code} ${project.source_file || ''}`;
-    return `<article class="project-card" data-project-card data-project-search="${esc(searchText)}"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">DỰ ÁN</span><h4>${esc(projectName)}</h4><p>Mã dự án: ${esc(project.code)} · ${esc(project.source_file || `${project.code}.xlsx`)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions"><a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a><a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a></div></article>`;
+    const actions = [
+      Number(project.material_rows || 0) + Number(project.btp_rows || 0) > 0 ? `<a href="#materials" data-project="${esc(project.code)}">Vật tư <span>→</span></a>` : '',
+      Number(project.progress_rows || 0) > 0 ? `<a href="#projects" data-project="${esc(project.code)}">Tiến độ <span>→</span></a>` : '',
+    ].filter(Boolean).join('');
+    return `<article class="project-card" data-project-card data-project-search="${esc(searchText)}"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><span class="project-updated">${project.updated_at ? `Cập nhật ${fmt(project.updated_at).slice(0,10)}` : 'Đã đồng bộ'}</span></div><span class="eyebrow">DỰ ÁN</span><h4>${esc(projectName)}</h4><p>Mã dự án: ${esc(project.code)} · ${esc(project.source_file || `${project.code}.xlsx`)}</p><div class="project-meta"><span>${fmt(Number(project.material_rows || 0) + Number(project.btp_rows || 0))} dòng PL/BTP</span><span>${fmt(project.progress_rows)} dòng tiến độ</span></div><div class="project-actions">${actions}</div></article>`;
   }).join('');
   return `${heading('AMECC · PROJECT PORTFOLIO','Danh mục dự án','Chọn một dự án để tra cứu vật tư hoặc theo dõi tiến độ.')}
     <div class="project-catalog-toolbar"><label class="search-box project-catalog-search">${icon('search')}<input id="overviewProjectSearch" type="search" inputmode="search" autocomplete="off" placeholder="Tìm theo tên hoặc mã dự án…" aria-label="Tìm dự án"></label><span class="count-chip" id="overviewProjectCount">${projects.length} dự án</span></div>
@@ -425,7 +436,7 @@ function materialsAuditPage() {
     <section class="material-audit-controls ${state.materialMobileFiltersOpen ? 'mobile-expanded' : ''}" aria-label="Lọc và xuất dữ liệu BOM, BTP">
       <div class="audit-filter-grid">
         <div class="mobile-audit-extra-filters" id="mobileAuditExtraFilters">
-          ${projectSelect()}
+          ${projectSelect('materials')}
           <label class="filter-label">Sheet BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
           <label class="filter-label">Lot<select id="materialLotFilter" ${lotOptions.length || hasUnassignedLot ? '' : 'disabled'}><option value="">${lotOptions.length ? `Tất cả Lot (${lotOptions.length})` : 'Không phát hiện Lot'}</option>${lotOptions.map((lot) => `<option value="${esc(lot)}" ${selectedLot === lot ? 'selected' : ''}>${esc(projectLotLabel(lot))}</option>`).join('')}${hasUnassignedLot ? `<option value="__unassigned__" ${selectedLot === '__unassigned__' ? 'selected' : ''}>Chưa phân Lot</option>` : ''}</select></label>
           <label class="filter-label">Ngày nhận<div class="date-filter-control"><input type="date" id="materialReceiptDateFilter" value="${esc(state.materialReceiptDateFilter)}" aria-label="Chọn hoặc nhập ngày nhận" title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp">${state.materialReceiptDateFilter ? '<button class="date-filter-clear" id="clearMaterialReceiptDate" type="button" title="Xem tất cả ngày">Xóa</button>' : ''}</div></label>
@@ -455,7 +466,7 @@ function materialDashboardPage() {
     ? options.find((option) => option.key === state.materialDashboardSheetFilter)?.source_sheet || 'Sheet đã chọn'
     : 'Toàn bộ sheet của dự án';
   const chartRange = { from:state.materialDashboardStartDate, to:state.materialDashboardEndDate, metric:state.materialDashboardMetric };
-  return `${heading('MATERIAL DASHBOARD · BOM & VẬT TƯ','Dashboard BOM & vật tư','Chọn sheet, khoảng ngày và đơn vị đo; rê chuột lên biểu đồ để xem số liệu chi tiết.',projectSelect())}
+  return `${heading('MATERIAL DASHBOARD · BOM & VẬT TƯ','Dashboard BOM & vật tư','Chọn sheet, khoảng ngày và đơn vị đo; rê chuột lên biểu đồ để xem số liệu chi tiết.',projectSelect('materials'))}
     <div class="audit-dashboard-filter"><label class="filter-label">Sheet dashboard<select id="materialDashboardSheetFilter"><option value="">Tất cả sheet (${options.length})</option>${options.map((option) => `<option value="${esc(option.key)}" ${option.key === state.materialDashboardSheetFilter ? 'selected' : ''}>${esc(option.source_sheet)} · ${esc(option.source_file)}</option>`).join('')}</select></label><label class="filter-label">Từ ngày<input type="date" id="materialDashboardStartDate" value="${esc(state.materialDashboardStartDate)}"></label><label class="filter-label">Đến ngày<input type="date" id="materialDashboardEndDate" value="${esc(state.materialDashboardEndDate)}"></label><label class="filter-label">Đơn vị biểu đồ<select id="materialDashboardMetric"><option value="quantity" ${state.materialDashboardMetric === 'quantity' ? 'selected' : ''}>Số lượng BTP</option><option value="kg" ${state.materialDashboardMetric === 'kg' ? 'selected' : ''}>Khối lượng · kg</option><option value="ton" ${state.materialDashboardMetric === 'ton' ? 'selected' : ''}>Khối lượng · tấn</option></select></label><span class="source-chip">Nguồn: ${esc(rows[0]?.source_file || `${state.currentProject}PL.xlsx`)}</span></div>
     <div class="stats-grid compact audit-dashboard-stats">${statCard('Dòng BTP',selectedRows.length,selectedLabel)}${statCard('Đã nhận',selectedRows.reduce((sum, row) => sum + (btpReceivedQuantity(row) || 0), 0),'Cộng từ các sheet đang xem','green')}${statCard('Còn thiếu',selectedRows.reduce((sum, row) => sum + (getBtpShortageQuantity(row) || 0), 0),'Theo cột Còn thiếu','red')}${statCard('Đơn vị giao',new Set(selectedRows.map((row) => row.unit).filter(Boolean)).size,'Theo DVG trong file BTP')}</div>
     ${renderMaterialDashboard(selectedRows, selectedLabel, chartRange)}`;
@@ -476,7 +487,7 @@ function projectsPage() {
   });
   const completed = filtered.filter((row) => row.handover_qty != null && row.quantity != null && Number(row.handover_qty) >= Number(row.quantity)).length;
   const columns = progressColumns;
-  return `${heading('PROJECT DELIVERY · QLDA','Quản lý tiến độ dự án','Theo dõi khối lượng theo hạng mục, cấu kiện và từng công đoạn sản xuất.',projectSelect())}
+  return `${heading('PROJECT DELIVERY · QLDA','Quản lý tiến độ dự án','Theo dõi khối lượng theo hạng mục, cấu kiện và từng công đoạn sản xuất.',projectSelect('progress'))}
     <div class="filter-toolbar project-filter-toolbar"><label class="search-box">${icon('search')}<input id="projectSearch" placeholder="Tìm hạng mục, bản vẽ, mã cấu kiện…" value="${esc(query)}"></label><label class="filter-label">Lot<select id="projectLotFilter" ${lotOptions.length || hasUnassignedLot ? '' : 'disabled'}><option value="">${lotOptions.length ? `Tất cả Lot (${lotOptions.length})` : 'Không phát hiện Lot'}</option>${lotOptions.map((lot) => `<option value="${esc(lot)}" ${selectedLot === lot ? 'selected' : ''}>${esc(projectLotLabel(lot))}</option>`).join('')}${hasUnassignedLot ? `<option value="__unassigned__" ${selectedLot === '__unassigned__' ? 'selected' : ''}>Chưa phân Lot</option>` : ''}</select></label><span class="source-chip">Nguồn: sheet Progress · header hàng 3 · dữ liệu từ hàng 4</span></div>
     <div class="stats-grid compact">${statCard('Dòng tiến độ',filtered.length,'Theo bộ lọc hiện tại')}${statCard('Đã bàn giao',completed,'Theo SL bàn giao / T’Qty','green')}${statCard('Đang có dữ liệu',filtered.filter((row) => row.fitup_qty != null || row.welding_qty != null || row.trial_assembly_qty != null).length,'Có ghi nhận sản xuất','gold')}${statCard('File nguồn',new Set(filtered.map((row) => row.source_file).filter(Boolean)).size,'Workbook QLDA')}</div>
     <div class="section-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Bảng tiến độ <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}${filtered.length !== rows.length ? ` / ${rows.length.toLocaleString('vi-VN')}` : ''}</span></h3></div></div>
@@ -1049,7 +1060,12 @@ async function renderPage() {
   try {
     if (state.page === 'overview') page.innerHTML = overviewPage();
     else if (['materials','materials-dashboard','projects'].includes(state.page)) {
-      if (!state.currentProject && state.projects.length) state.currentProject = state.projects[0].code;
+      const availableProjects = state.page === 'projects'
+        ? projectsForData('progress')
+        : ['materials','materials-dashboard'].includes(state.page) ? projectsForData('materials') : state.projects;
+      if (!availableProjects.some((project) => project.code === state.currentProject)) {
+        state.currentProject = availableProjects[0]?.code || '';
+      }
       await loadPageData();
       if (generation !== renderGeneration) return;
       page.innerHTML = state.page === 'materials' ? materialsAuditPage() : state.page === 'materials-dashboard' ? materialDashboardPage() : projectsPage();
