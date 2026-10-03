@@ -46,6 +46,15 @@ function stopAmeccDriveSync() {
   console.log('AMECC Drive sync trigger removed. Imported site data is unchanged.');
 }
 
+/** Clear retry cooldowns and immediately retry files that failed on the last sync. */
+function retryFailedAmeccDriveSync() {
+  const properties = PropertiesService.getScriptProperties();
+  const failedKeys = Object.keys(properties.getProperties()).filter((key) => key.startsWith(AMECC_FAILED_PREFIX));
+  failedKeys.forEach((key) => properties.deleteProperty(key));
+  console.log(`Cleared ${failedKeys.length} AMECC Drive retry marker(s).`);
+  syncAmeccDrive();
+}
+
 function assertSyncApiReady_(syncToken) {
   const response = UrlFetchApp.fetch(`${AMECC_SYNC.apiBaseUrl}/api/admin/drive-sync/health`, {
     method: 'get',

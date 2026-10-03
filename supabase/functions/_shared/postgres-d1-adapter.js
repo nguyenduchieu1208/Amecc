@@ -87,7 +87,9 @@ export class PostgresD1Adapter {
   }
 
   async batch(statements) {
-    return this.client.begin((transaction) => statements.map((statement) => statement.execute(transaction)));
+    return this.client.begin(async (transaction) => Promise.all(
+      statements.map((statement) => statement.execute(transaction)),
+    ));
   }
 }
 
