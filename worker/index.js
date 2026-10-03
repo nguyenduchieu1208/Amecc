@@ -553,8 +553,8 @@ async function importProjectRows(request, env) {
     for (let offset = 0; offset < records.length; offset += maxRowsPerInsert) {
       const group = records.slice(offset, offset + maxRowsPerInsert);
       const values = group.flatMap((row, index) => [importId, startRow + offset + index, ...PROJECT_IMPORT_COLUMNS.map((column) => row[column] ?? null)]);
-      const rowSelects = group.map(() => `SELECT ${stagingColumns.map(() => '?').join(', ')}`).join(' UNION ALL ');
-      statements.push(env.DB.prepare(`INSERT INTO project_progress_import_rows (${stagingColumns.join(', ')}) SELECT * FROM (${rowSelects}) AS incoming_rows`).bind(...values));
+      const valueGroups = group.map(() => `(${stagingColumns.map(() => '?').join(', ')})`).join(', ');
+      statements.push(env.DB.prepare(`INSERT INTO project_progress_import_rows (${stagingColumns.join(', ')}) VALUES ${valueGroups}`).bind(...values));
     }
     statements.push(env.DB.prepare('UPDATE project_imports SET next_row = ? WHERE id = ? AND next_row = ? AND committed = 0')
       .bind(nextRow, importId, startRow));
