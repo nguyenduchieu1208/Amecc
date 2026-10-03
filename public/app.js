@@ -12,7 +12,7 @@ const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', projectLotFilter: '', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', projectLotFilter: '', materialLotFilter: '', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -34,6 +34,18 @@ function projectLotCode(row) {
   return '';
 }
 function projectLotLabel(code) { return `Lot ${String(code).replace(/^LOT/i, '')}`; }
+function materialAuditLotCodes(row) {
+  const linkedLots = [...new Set((row?.progress || []).map(projectLotCode).filter(Boolean))];
+  if (linkedLots.length) return linkedLots;
+  const sourceSheets = [row?.bom_source_sheet, row?.btp_source_sheet, row?.source_sheet, row?.bomLine?.source_sheet, row?.bomParent?.source_sheet, row?.btp?.source_sheet];
+  for (const sheet of sourceSheets) {
+    const explicitLot = projectLotCode({ mh:sheet });
+    if (explicitLot) return [explicitLot];
+    const suffixLot = String(sheet || '').match(/L([0-9]+)$/i);
+    if (suffixLot) return [`LOT${suffixLot[1]}`];
+  }
+  return [];
+}
 function applyTheme(theme) {
   if (!themes.includes(theme)) return;
   state.theme = theme;
@@ -363,6 +375,10 @@ function filteredMaterialAuditRows({ rows = materialAuditRows(), options = audit
   const search = String(state.materialSearch || '').trim().toLocaleLowerCase();
   return rows.filter((row) => {
     if (!auditRowMatchesSheets(row, selected)) return false;
+    if (state.materialLotFilter) {
+      const rowLots = materialAuditLotCodes(row);
+      if (state.materialLotFilter === '__unassigned__' ? rowLots.length > 0 : !rowLots.includes(state.materialLotFilter)) return false;
+    }
     if (state.materialReceiptDateFilter && (!row.btp || !filterBtpRowsByReceiptDate([row.btp], state.materialReceiptDateFilter).length)) return false;
     if (state.materialUnitFilter && String(row.btp?.unit ?? '').trim() !== state.materialUnitFilter) return false;
     const status = auditStatus(row);
@@ -377,6 +393,12 @@ function filteredMaterialAuditRows({ rows = materialAuditRows(), options = audit
 function materialsAuditPage() {
   const options = auditSheetOptions();
   const selected = auditSelectedKeys(options);
+  const allRows = materialAuditRows();
+  const lotOptions = [...new Set(allRows.flatMap(materialAuditLotCodes))]
+    .sort((left, right) => left.localeCompare(right, 'vi', { numeric:true, sensitivity:'base' }));
+  const hasUnassignedLot = allRows.some((row) => !materialAuditLotCodes(row).length);
+  const selectedLot = lotOptions.includes(state.materialLotFilter)
+    || (state.materialLotFilter === '__unassigned__' && hasUnassignedLot) ? state.materialLotFilter : '';
   const visibleRows = filteredMaterialAuditRows({ options });
   const search = String(state.materialSearch || '').trim();
   const contextRows = search ? filteredMaterialAuditRows({ options, includeSearch:false }) : visibleRows;
@@ -404,6 +426,7 @@ function materialsAuditPage() {
         <div class="mobile-audit-extra-filters" id="mobileAuditExtraFilters">
           ${projectSelect()}
           <label class="filter-label">Sheet BTP<details class="sheet-multi-select" id="materialSheetDropdown"><summary>${esc(selectedLabel)}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-material-sheet-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${options.length} sheet</small></label>${sheetOptionsMarkup || '<p class="muted">Chưa có sheet BTP</p>'}</div></details></label>
+          <label class="filter-label">Lot<select id="materialLotFilter" ${lotOptions.length || hasUnassignedLot ? '' : 'disabled'}><option value="">${lotOptions.length ? `Tất cả Lot (${lotOptions.length})` : 'Không phát hiện Lot'}</option>${lotOptions.map((lot) => `<option value="${esc(lot)}" ${selectedLot === lot ? 'selected' : ''}>${esc(projectLotLabel(lot))}</option>`).join('')}${hasUnassignedLot ? `<option value="__unassigned__" ${selectedLot === '__unassigned__' ? 'selected' : ''}>Chưa phân Lot</option>` : ''}</select></label>
           <label class="filter-label">Ngày nhận<div class="date-filter-control"><input type="date" id="materialReceiptDateFilter" value="${esc(state.materialReceiptDateFilter)}" aria-label="Chọn hoặc nhập ngày nhận" title="Chọn ngày trên lịch hoặc nhập ngày trực tiếp">${state.materialReceiptDateFilter ? '<button class="date-filter-clear" id="clearMaterialReceiptDate" type="button" title="Xem tất cả ngày">Xóa</button>' : ''}</div></label>
           <label class="filter-label">Đơn vị giao<select id="materialUnitFilter"><option value="" ${state.materialUnitFilter ? '' : 'selected'}>Tất cả đơn vị</option>${deliveryUnits.map((unit) => `<option value="${esc(unit)}" ${state.materialUnitFilter === unit ? 'selected' : ''}>${esc(unit)}</option>`).join('')}</select></label>
           <label class="filter-label">Trạng thái<select id="materialStatusFilter"><option value="" ${state.materialStatusFilter ? '' : 'selected'}>Tất cả trạng thái</option><option value="shortage" ${state.materialStatusFilter === 'shortage' ? 'selected' : ''}>Còn thiếu</option><option value="received" ${state.materialStatusFilter === 'received' ? 'selected' : ''}>Đã nhận</option><option value="no-btp" ${state.materialStatusFilter === 'no-btp' ? 'selected' : ''}>BOM chưa có BTP</option><option value="unlinked" ${state.materialStatusFilter === 'unlinked' ? 'selected' : ''}>Chưa khớp BOM / QLDA</option></select></label>
@@ -564,6 +587,7 @@ function bindPage() {
   document.querySelector('#projectFilter')?.addEventListener('change', async (event) => {
     state.currentProject = event.target.value;
     state.projectLotFilter = '';
+    state.materialLotFilter = '';
     state.materialSelectedSheets = null;
     state.materialReceiptDateFilter = '';
     state.materialUnitFilter = '';
@@ -666,6 +690,11 @@ function bindPage() {
     state.materialPageIndex = 0;
     rerenderAudit();
   });
+  document.querySelector('#materialLotFilter')?.addEventListener('change', (event) => {
+    state.materialLotFilter = event.currentTarget.value;
+    state.materialPageIndex = 0;
+    rerenderAudit();
+  });
   bindAuditPagination();
   const rerenderMaterialDashboard = () => {
     const page = document.querySelector('#page');
@@ -738,6 +767,7 @@ function bindPage() {
   document.querySelectorAll('[data-project]').forEach((link) => link.addEventListener('click', () => {
     if (state.currentProject !== link.dataset.project) {
       state.projectLotFilter = '';
+      state.materialLotFilter = '';
       state.materialSelectedSheets = null;
       state.materialReceiptDateFilter = '';
       state.materialUnitFilter = '';
@@ -977,6 +1007,7 @@ function invalidateProjectData(projectCode) {
   state.btpData = null;
   state.progressData = null;
   state.auditDataCache = null;
+  state.materialLotFilter = '';
 }
 function resetProjectData(projectCode) {
   state.loadedProject = projectCode;
@@ -984,6 +1015,7 @@ function resetProjectData(projectCode) {
   state.btpData = null;
   state.progressData = null;
   state.auditDataCache = null;
+  state.materialLotFilter = '';
 }
 async function loadProjectDataField(projectCode, field, endpoint) {
   if (state[field]) return;
