@@ -575,7 +575,7 @@ async function importProjectRows(request, env) {
     }
     const now = new Date().toISOString();
     const runId = crypto.randomUUID();
-    const sourceColumns = PROJECT_IMPORT_COLUMNS.join(', ');
+    const sourceColumns = PROJECT_IMPORT_COLUMNS.filter((column) => column !== 'source_row').join(', ');
     const statements = [
       env.DB.prepare('UPDATE project_imports SET committed = 1, commit_token = ? WHERE id = ? AND committed = 0 AND next_row = ? AND (SELECT COUNT(*) FROM project_progress_import_rows WHERE import_id = ?) = ?')
         .bind(runId, importId, manifest.expected_rows, importId, manifest.expected_rows),
