@@ -8,11 +8,12 @@ import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortag
 import { renderMaterialDashboard } from './material-dashboard.js';
 import { buildMaterialAuditRows, hasBtpIdentity, isPurchasingMaterialSheet, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 import { readProjectWorkbook } from './project-import.js';
+import { renderProjectDashboard } from './project-dashboard.js';
 const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', materialLotFilter: '', projectSearch: '', projectStatusFilter: '', projectPageIndex: 0, auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', materialLotFilter: '', projectSearch: '', projectStatusFilter: '', projectPageIndex: 0, projectDashboardStartDate: '', projectDashboardEndDate: '', projectDashboardMetric: 'kg', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -123,7 +124,7 @@ function loadExcelJsLibrary() {
 }
 const projectDataRequests = new Map();
 let renderGeneration = 0;
-function currentPageTitle() { return ({ overview:'Danh mục dự án', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', projects:'Quản lý dự án' })[state.page] || 'AMECC'; }
+function currentPageTitle() { return ({ overview:'Danh mục dự án', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', 'projects-dashboard':'Dashboard quản lý dự án', projects:'Quản lý dự án' })[state.page] || 'AMECC'; }
 function shell() {
   const navigation = `<div class="nav-label">KHÔNG GIAN LÀM VIỆC</div>
       <nav class="nav-list" aria-label="Điều hướng chính">
@@ -132,9 +133,9 @@ function shell() {
           <button class="nav-parent" type="button" data-group="materials" aria-expanded="${['materials','materials-dashboard'].includes(state.page)}">${icon('materials')}<span>Quản lý vật tư</span><span class="nav-chevron">${icon('chevron')}</span></button>
           <div class="nav-children"><a class="nav-child ${state.page === 'materials-dashboard' ? 'active' : ''}" href="#materials-dashboard">Dashboard BOM &amp; vật tư</a><a class="nav-child ${state.page === 'materials' ? 'active' : ''}" href="#materials">BOM &amp; Vật tư PL</a></div>
         </div>
-        <div class="nav-group ${state.page === 'projects' ? 'expanded' : ''}">
-          <button class="nav-parent" type="button" data-group="projects" aria-expanded="${state.page === 'projects'}">${icon('projects')}<span>Quản lý dự án</span><span class="nav-chevron">${icon('chevron')}</span></button>
-          <div class="nav-children"><a class="nav-child ${state.page === 'projects' ? 'active' : ''}" href="#projects">Tiến độ dự án</a></div>
+        <div class="nav-group ${['projects','projects-dashboard'].includes(state.page) ? 'expanded' : ''}">
+          <button class="nav-parent" type="button" data-group="projects" aria-expanded="${['projects','projects-dashboard'].includes(state.page)}">${icon('projects')}<span>Quản lý dự án</span><span class="nav-chevron">${icon('chevron')}</span></button>
+          <div class="nav-children"><a class="nav-child ${state.page === 'projects-dashboard' ? 'active' : ''}" href="#projects-dashboard">Dashboard báo cáo</a><a class="nav-child ${state.page === 'projects' ? 'active' : ''}" href="#projects">Tiến độ dự án</a></div>
         </div>
       </nav>`;
   app.innerHTML = `<div class="shell theme-${esc(state.theme)} ${state.sidebarCollapsed ? 'sidebar-collapsed' : ''}">
@@ -557,6 +558,11 @@ function openProjectDetail(row) {
   if (typeof dialog.showModal === 'function') dialog.showModal();
   else dialog.setAttribute('open', '');
 }
+function projectDashboardPage() {
+  const rows = state.progressData?.rows || [];
+  return `${heading('PROJECT REPORTING · QLDA','Dashboard báo cáo dự án','Theo dõi khối lượng thực hiện, công đoạn, tổ phụ trách và bàn giao của dự án đang chọn.',projectSelect('progress'))}
+    ${renderProjectDashboard(rows, { from:state.projectDashboardStartDate, to:state.projectDashboardEndDate, metric:state.projectDashboardMetric })}`;
+}
 function projectsPage() {
   const rows = state.progressData?.rows || [];
   const query = state.projectSearch.trim();
@@ -706,7 +712,30 @@ function bindPage() {
     state.materialDashboardStartDate = '';
     state.materialDashboardEndDate = '';
     state.materialDashboardMetric = 'quantity';
+    state.projectDashboardStartDate = '';
+    state.projectDashboardEndDate = '';
+    state.projectDashboardMetric = 'kg';
     renderPage();
+  });
+  const rerenderProjectDashboard = () => {
+    const page = document.querySelector('#page');
+    const position = window.scrollY;
+    if (!page) return;
+    page.innerHTML = projectDashboardPage();
+    bindPage();
+    window.scrollTo(0, position);
+  };
+  document.querySelector('#projectDashboardStartDate')?.addEventListener('change', (event) => {
+    state.projectDashboardStartDate = event.currentTarget.value;
+    rerenderProjectDashboard();
+  });
+  document.querySelector('#projectDashboardEndDate')?.addEventListener('change', (event) => {
+    state.projectDashboardEndDate = event.currentTarget.value;
+    rerenderProjectDashboard();
+  });
+  document.querySelector('#projectDashboardMetric')?.addEventListener('change', (event) => {
+    state.projectDashboardMetric = event.currentTarget.value;
+    rerenderProjectDashboard();
   });
   const rerenderAudit = ({ keepDropdown = false } = {}) => {
     const page = document.querySelector('#page');
@@ -970,6 +999,9 @@ function bindPage() {
       state.materialDashboardStartDate = '';
       state.materialDashboardEndDate = '';
       state.materialDashboardMetric = 'quantity';
+      state.projectDashboardStartDate = '';
+      state.projectDashboardEndDate = '';
+      state.projectDashboardMetric = 'kg';
     }
     state.currentProject = link.dataset.project;
   }));
@@ -1226,7 +1258,7 @@ async function loadProjectDataField(projectCode, field, endpoint) {
   }
 }
 async function loadPageData() {
-  if (!state.currentProject || !['materials','materials-dashboard','projects'].includes(state.page)) return;
+  if (!state.currentProject || !['materials','materials-dashboard','projects-dashboard','projects'].includes(state.page)) return;
   const projectCode = state.currentProject;
   if (state.loadedProject !== projectCode) resetProjectData(projectCode);
   const fields = state.page === 'materials'
@@ -1240,8 +1272,8 @@ async function renderPage() {
   page.innerHTML = '<div class="loading-state"><span class="spinner"></span><p>Đang tải dữ liệu…</p></div>';
   try {
     if (state.page === 'overview') page.innerHTML = overviewPage();
-    else if (['materials','materials-dashboard','projects'].includes(state.page)) {
-      const availableProjects = state.page === 'projects'
+    else if (['materials','materials-dashboard','projects-dashboard','projects'].includes(state.page)) {
+      const availableProjects = ['projects','projects-dashboard'].includes(state.page)
         ? projectsForData('progress')
         : ['materials','materials-dashboard'].includes(state.page) ? projectsForData('materials') : state.projects;
       if (!availableProjects.some((project) => project.code === state.currentProject)) {
@@ -1249,7 +1281,7 @@ async function renderPage() {
       }
       await loadPageData();
       if (generation !== renderGeneration) return;
-      page.innerHTML = state.page === 'materials' ? materialsAuditPage() : state.page === 'materials-dashboard' ? materialDashboardPage() : projectsPage();
+      page.innerHTML = state.page === 'materials' ? materialsAuditPage() : state.page === 'materials-dashboard' ? materialDashboardPage() : state.page === 'projects-dashboard' ? projectDashboardPage() : projectsPage();
     } else {
       await refreshPlFiles();
       if (generation !== renderGeneration) return;
@@ -1264,12 +1296,12 @@ async function navigate() {
   if (ADMIN_MODE) {
     if (state.user?.role !== 'admin') { loginScreen(); return; }
     const key = location.hash.replace(/^#\/?/, '') || 'admin';
-    state.page = ['overview','materials','materials-dashboard','projects','admin'].includes(key) ? key : 'admin';
+    state.page = ['overview','materials','materials-dashboard','projects-dashboard','projects','admin'].includes(key) ? key : 'admin';
     shell(); await renderPage();
     return;
   }
   const key = location.hash.replace(/^#\/?/, '') || 'overview';
-  state.page = ['overview','materials','materials-dashboard','projects'].includes(key) ? key : 'overview';
+  state.page = ['overview','materials','materials-dashboard','projects-dashboard','projects'].includes(key) ? key : 'overview';
   shell(); await renderPage();
 }
 async function logout() {

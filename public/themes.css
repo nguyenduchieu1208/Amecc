@@ -29,4 +29,94 @@
 .shell .chart-area { fill:color-mix(in srgb,var(--chart-accent),transparent 88%); }
 .shell .chart-bar-received,.shell .legend-received { fill:var(--chart-accent); background:var(--chart-accent); }
 .shell .chart-bar-shortage,.shell .legend-shortage { fill:var(--chart-secondary); background:var(--chart-secondary); }
-.shell .search-highlight { background:#ffe58a; color:#5b3700; }
+.shell .search-highlight { background:var(--search-highlight); color:var(--search-highlight-text); }
+
+/* Semantic tones follow the active theme so status colors stay legible in dark and warm palettes. */
+.shell {
+  --status-success:#08744f;
+  --status-warning:#9a670b;
+  --status-danger:#b4232a;
+  --status-info:var(--blue);
+  --status-success-bg:color-mix(in srgb,var(--status-success) 13%,var(--surface));
+  --status-warning-bg:color-mix(in srgb,var(--status-warning) 13%,var(--surface));
+  --status-danger-bg:color-mix(in srgb,var(--status-danger) 12%,var(--surface));
+  --status-info-bg:color-mix(in srgb,var(--status-info) 12%,var(--surface));
+  --search-highlight:color-mix(in srgb,var(--chart-secondary) 27%,var(--surface));
+  --search-highlight-text:var(--ink);
+  --chart-series-1:var(--chart-accent);
+  --chart-series-2:var(--chart-secondary);
+  --chart-series-3:#8b63cf;
+  --chart-series-4:#0c8f8a;
+  --chart-series-5:#d65e67;
+  --report-delivered:#16856a;
+  --report-remaining:color-mix(in srgb,var(--chart-secondary) 80%,var(--surface));
+}
+.shell.theme-midnight {
+  --status-success:#72ddb0; --status-warning:#f3c66d; --status-danger:#ff9299; --status-info:#9ec7ff;
+  --chart-series-1:#69b0ff; --chart-series-2:#f2bd62; --chart-series-3:#c6a0ff; --chart-series-4:#63d2c5; --chart-series-5:#ff8b9a;
+  --report-delivered:#54cca0; --report-remaining:#c38e43;
+}
+.shell.theme-paper {
+  --chart-series-1:#9a6439; --chart-series-2:#7f945b; --chart-series-3:#7867a9; --chart-series-4:#527f79; --chart-series-5:#b75e53;
+  --report-delivered:#557c5d; --report-remaining:#b38a44;
+}
+.shell.theme-ocean {
+  --chart-series-1:#1494ad; --chart-series-2:#d9933e; --chart-series-3:#7b68cf; --chart-series-4:#3f83b9; --chart-series-5:#cf6377;
+  --report-delivered:#148370; --report-remaining:#cf9747;
+}
+.shell.theme-emerald {
+  --chart-series-1:#138b64; --chart-series-2:#c18b2d; --chart-series-3:#7062b7; --chart-series-4:#328b9a; --chart-series-5:#c35d68;
+  --report-delivered:#11805d; --report-remaining:#ba8a37;
+}
+.shell.theme-violet {
+  --chart-series-1:#7656d7; --chart-series-2:#d5913c; --chart-series-3:#347fb4; --chart-series-4:#258d83; --chart-series-5:#cf5b72;
+  --report-delivered:#19816d; --report-remaining:#c38b3d;
+}
+.shell.theme-graphite {
+  --chart-series-1:#4d7f9f; --chart-series-2:#ce8742; --chart-series-3:#786ab4; --chart-series-4:#358b84; --chart-series-5:#c55e68;
+  --report-delivered:#277b68; --report-remaining:#b87e3c;
+}
+.shell.theme-sunset {
+  --chart-series-1:#d45f51; --chart-series-2:#d99a35; --chart-series-3:#8066b9; --chart-series-4:#278b83; --chart-series-5:#ab546d;
+  --report-delivered:#18806d; --report-remaining:#c68d37;
+}
+
+.shell .status-pill.success { color:var(--status-success); background:var(--status-success-bg); border:1px solid color-mix(in srgb,var(--status-success) 25%,var(--surface)); }
+.shell .status-pill.warning { color:var(--status-warning); background:var(--status-warning-bg); border:1px solid color-mix(in srgb,var(--status-warning) 24%,var(--surface)); }
+.shell .status-pill.danger { color:var(--status-danger); background:var(--status-danger-bg); border:1px solid color-mix(in srgb,var(--status-danger) 23%,var(--surface)); }
+.shell .status-pill.info { color:var(--status-info); background:var(--status-info-bg); border:1px solid color-mix(in srgb,var(--status-info) 22%,var(--surface)); }
+.shell .status-pill.neutral { color:var(--muted); background:var(--soft); border:1px solid var(--line); }
+.shell .stat-card.blue .stat-symbol,.shell .project-part-link,.shell .project-total-weight { color:var(--blue); }
+.shell .project-stage-column.fitup { background:color-mix(in srgb,var(--chart-series-1) 9%,var(--surface)); border-bottom-color:color-mix(in srgb,var(--chart-series-1) 32%,var(--line)); }
+.shell .project-stage-column.welding { background:color-mix(in srgb,var(--chart-series-2) 9%,var(--surface)); border-bottom-color:color-mix(in srgb,var(--chart-series-2) 32%,var(--line)); }
+.shell .project-stage-column.trial { background:color-mix(in srgb,var(--chart-series-3) 9%,var(--surface)); border-bottom-color:color-mix(in srgb,var(--chart-series-3) 32%,var(--line)); }
+.shell .project-stage-column.qc { background:color-mix(in srgb,var(--chart-series-4) 9%,var(--surface)); border-bottom-color:color-mix(in srgb,var(--chart-series-4) 32%,var(--line)); }
+.shell .project-stage-column.handover { background:color-mix(in srgb,var(--chart-series-5) 9%,var(--surface)); border-bottom-color:color-mix(in srgb,var(--chart-series-5) 32%,var(--line)); }
+.shell .project-stage-cell.complete strong,.shell .project-delivery-meta { color:var(--status-success); }
+.shell .project-dialog-header { background:linear-gradient(112deg,var(--sidebar-bottom),var(--sidebar-top) 74%,var(--chart-accent)); }
+.shell .project-dialog-symbol { border-color:color-mix(in srgb,var(--status-success) 60%,transparent); background:color-mix(in srgb,var(--status-success) 23%,var(--sidebar-bottom)); color:var(--status-success); }
+.shell .project-detail-stage.complete { border-color:color-mix(in srgb,var(--status-success) 42%,var(--line)); background:color-mix(in srgb,var(--status-success) 7%,var(--surface)); }
+.shell .project-detail-stage.complete .project-detail-stage-icon { background:var(--status-success); color:var(--surface); }
+.shell .project-detail-stage.complete .project-detail-stage-heading>strong { background:var(--status-success-bg); color:var(--status-success); }
+.shell .project-detail-stage.in-progress { border-color:color-mix(in srgb,var(--status-warning) 42%,var(--line)); background:color-mix(in srgb,var(--status-warning) 7%,var(--surface)); }
+.shell .project-detail-stage.in-progress .project-detail-stage-icon { background:var(--status-warning-bg); color:var(--status-warning); }
+.shell .project-detail-stage.in-progress .project-detail-stage-heading>strong { background:var(--status-warning-bg); color:var(--status-warning); }
+.shell .bom-btp-table tbody tr.search-match-row td { background:var(--search-highlight); }
+.shell .bom-btp-table tbody tr.search-match-row:hover td { background:color-mix(in srgb,var(--chart-secondary) 39%,var(--surface)); }
+.shell .bom-btp-table tbody tr.search-match-row td:first-child { background:color-mix(in srgb,var(--chart-secondary) 32%,var(--surface)); }
+.shell .bom-btp-table tbody tr.search-match-row:hover td:first-child { background:color-mix(in srgb,var(--chart-secondary) 45%,var(--surface)); }
+.shell .material-chart-invalid .material-chart-empty,.shell .material-dashboard-invalid .material-chart-empty { color:var(--status-warning); background:var(--status-warning-bg); border-color:color-mix(in srgb,var(--status-warning) 25%,var(--line)); }
+.shell .project-export-message.success-message { color:var(--status-success); }
+.shell .project-export-message.error-message { color:var(--status-danger); }
+.shell .stat-card.red .stat-symbol,.shell .bom-btp-table .shortage-value { color:var(--status-danger); }
+.shell .stat-card.green .stat-symbol,.shell .bom-btp-table .received-value { color:var(--status-success); }
+.shell .stat-card.gold .stat-symbol { color:var(--status-warning); }
+.shell .bom-meta-chip { color:var(--blue); }
+.shell .bom-btp-table th { color:var(--muted); }
+.shell .bom-btp-table tbody tr.btp-complete-row td,.shell .bom-btp-table tbody tr.btp-complete-row td:first-child { background:color-mix(in srgb,var(--status-success) 6%,var(--surface)); }
+.shell .bom-btp-table tbody tr.btp-complete-row:hover td,.shell .bom-btp-table tbody tr.btp-complete-row:hover td:first-child { background:color-mix(in srgb,var(--status-success) 10%,var(--surface)); }
+.shell .bom-btp-table .btp-type-chip,.shell .bom-btp-table .btp-unit-chip { background:var(--status-info-bg); color:var(--status-info); }
+.shell .bom-btp-table .btp-type-chip.shape { background:var(--status-warning-bg); color:var(--status-warning); }
+.shell .bom-btp-table .btp-missing-row td,.shell .bom-btp-table .btp-missing-row td:first-child { background:color-mix(in srgb,var(--status-warning) 8%,var(--surface))!important; }
+.shell .audit-receipt-list { color:var(--blue); }
+.shell :is(input,select,button,a):focus-visible { outline-color:var(--blue); }
