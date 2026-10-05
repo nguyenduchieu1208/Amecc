@@ -1,6 +1,6 @@
 # AMECC Drive sync
 
-This Apps Script watches the two private Drive folders and imports changed `*PL.xlsx` files from **Data** plus `.xlsx` project workbooks from **QLDA**. It reads both workbook types with the same parsers used by the website, skips the `Purchasing` sheet in PL workbooks, sends rows in safe chunks, and replaces the imported rows for each same-named source file. It does not copy the original Excel files to GitHub or Supabase Storage.
+This Apps Script watches the two private Drive folders and imports changed `*PL.xlsx` files from **Data** plus `.xlsx` project workbooks from **QLDA**. It reads both workbook types with the same parsers used by the website, skips the `Purchasing` sheet in PL workbooks, sends rows in safe chunks, and replaces the imported rows for each same-named source file. It also compares the current folder contents with the previously tracked file IDs and removes imported rows when a source workbook is deleted or moved out of its monitored folder. If a workbook is renamed or replaced with another file of the same name, it syncs the new source before cleaning up the old rows. It does not copy the original Excel files to GitHub or Supabase Storage.
 
 ## One-time setup
 
@@ -13,7 +13,7 @@ This Apps Script watches the two private Drive folders and imports changed `*PL.
    - `AMECC_QLDA_DRIVE_FOLDER_ID` = `1418VlFe3m3mgA-81jgJ8F5vetAev9qKG` (optional; this folder is the default)
 5. Run `setupAmeccDriveSync` once and approve the Google Drive read-only and external-request permissions. It installs a one-minute trigger and starts the first sync.
 
-The first run scans all eligible files in both folders. Changed workbooks are retried if an API request fails; successful files are skipped until their Drive modification time or size changes. Check **Apps Script → Executions** for per-file `DONE` or `FAILED` records. `resetAmeccDriveSyncFailures` clears retry delays when you have corrected a permanent configuration issue.
+The first run scans all eligible files in both folders. Changed workbooks are retried if an API request fails; successful files are skipped until their Drive modification time, size, or filename changes. Check **Apps Script → Executions** for per-file `DONE`, `FAILED`, `REMOVED`, or `DELETE FAILED` records. A deletion API failure is queued and retried on the next trigger. `resetAmeccDriveSyncFailures` clears retry delays when you have corrected a permanent configuration issue.
 
 Use `stopAmeccDriveSync` to remove the time trigger. It leaves the data already imported on the site unchanged. When the site's workbook parser changes, run `npm run drive-sync:bundle` before deploying Pages so the pinned parser asset and its integrity hashes stay aligned.
 

@@ -12,11 +12,10 @@ const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', projectLotFilter: '', materialLotFilter: '', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', materialLotFilter: '', projectSearch: '', projectStatusFilter: '', projectPageIndex: 0, auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
-const progressColumns = ['item','mh','wo_date','product_type','classification','allocation','drawing','part_no','size','quantity','unit_weight','total_weight','profile','item_id','note','fitup_date','fitup_qty','fitup_weight','welding_date','welding_qty','welding_weight','trial_assembly_date','trial_assembly_qty','trial_assembly_weight','acceptance_date','acceptance_qty','acceptance_weight','handover_date','handover_qty','handover_weight','receiver','record_no'];
 function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]); }
 function fmt(value) {
   if (value === null || value === undefined || value === '') return '—';
@@ -102,6 +101,25 @@ function loadSpreadsheetLibrary() {
     });
   }
   return spreadsheetLibraryPromise;
+}
+let excelJsLibraryPromise;
+function loadExcelJsLibrary() {
+  if (window.ExcelJS?.Workbook) return Promise.resolve(window.ExcelJS);
+  if (!excelJsLibraryPromise) {
+    excelJsLibraryPromise = new Promise((resolve, reject) => {
+      const fail = () => {
+        excelJsLibraryPromise = null;
+        reject(new Error('Không tải được bộ xử lý Excel có giữ định dạng; hãy tải lại trang rồi thử lại.'));
+      };
+      const script = document.createElement('script');
+      script.src = new URL('./vendor/exceljs.min.js', import.meta.url).href;
+      script.async = true;
+      script.onload = () => window.ExcelJS?.Workbook ? resolve(window.ExcelJS) : fail();
+      script.onerror = fail;
+      document.head.append(script);
+    });
+  }
+  return excelJsLibraryPromise;
 }
 const projectDataRequests = new Map();
 let renderGeneration = 0;
@@ -471,27 +489,103 @@ function materialDashboardPage() {
     <div class="stats-grid compact audit-dashboard-stats">${statCard('Dòng BTP',selectedRows.length,selectedLabel)}${statCard('Đã nhận',selectedRows.reduce((sum, row) => sum + (btpReceivedQuantity(row) || 0), 0),'Cộng từ các sheet đang xem','green')}${statCard('Còn thiếu',selectedRows.reduce((sum, row) => sum + (getBtpShortageQuantity(row) || 0), 0),'Theo cột Còn thiếu','red')}${statCard('Đơn vị giao',new Set(selectedRows.map((row) => row.unit).filter(Boolean)).size,'Theo DVG trong file BTP')}</div>
     ${renderMaterialDashboard(selectedRows, selectedLabel, chartRange)}`;
 }
+const projectStages = [
+  { key:'fitup', label:'1. Gá lắp', fullLabel:'Gá lắp (Fit-up)', tone:'fitup' },
+  { key:'welding', label:'2. Hàn', fullLabel:'Hàn (Welding)', tone:'welding' },
+  { key:'trial_assembly', label:'3. TH thử', fullLabel:'Tổ hợp thử (Trial Assembly)', tone:'trial' },
+  { key:'acceptance', label:'4. NT (QC)', fullLabel:'Nghiệm thu (QC Inspection)', tone:'qc' },
+  { key:'handover', label:'5. Bàn giao', fullLabel:'Bàn giao (Handover / Delivery)', tone:'handover' },
+];
+function projectStageValue(row, stage) {
+  const quantity = row[`${stage.key}_qty`];
+  const weight = Number(row[`${stage.key}_weight`] || 0);
+  const date = row[`${stage.key}_date`];
+  const planned = Number(row.quantity || 0);
+  const optional = stage.key === 'trial_assembly' && quantity == null && !date && weight === 0;
+  const actual = quantity == null ? 0 : Number(quantity);
+  const hasRecord = Boolean(date) || quantity != null || weight > 0;
+  const complete = planned > 0 && actual >= planned;
+  const percent = planned > 0 ? Math.min(100, Math.round(actual / planned * 100)) : 0;
+  return { quantity, actual, planned, weight, date, optional, hasRecord, complete, percent };
+}
+function progressDate(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  return match ? `${match[3].padStart(2, '0')}/${match[2].padStart(2, '0')}/${match[1]}` : text || '—';
+}
+function projectAssemblyStatus(row) {
+  const handover = projectStageValue(row, projectStages[4]);
+  const acceptance = projectStageValue(row, projectStages[3]);
+  const welding = projectStageValue(row, projectStages[1]);
+  const fitup = projectStageValue(row, projectStages[0]);
+  if (handover.complete) return { label:'Bàn giao', tone:'success' };
+  if (handover.hasRecord || acceptance.hasRecord) return { label:'Đang nghiệm thu', tone:'info' };
+  if (welding.hasRecord) return { label:'Đang hàn', tone:'warning' };
+  if (fitup.hasRecord) return { label:'Đang gá lắp', tone:'warning' };
+  return { label:'Chưa bắt đầu', tone:'neutral' };
+}
+function projectStageCell(row, stage) {
+  const data = projectStageValue(row, stage);
+  if (data.optional || !data.hasRecord) return '<span class="project-stage-empty">—</span>';
+  return `<div class="project-stage-cell ${data.complete ? 'complete' : ''}"><strong>${fmt(data.actual)}/${fmt(data.planned)}</strong><span>${fmt(data.weight)} kg</span><small>${esc(progressDate(data.date))}</small></div>`;
+}
+function projectDetailDialog(row) {
+  const status = projectAssemblyStatus(row);
+  const technical = [
+    ['Tên bản vẽ', row.drawing], ['Quy cách (Size)', row.size], ['Số lượng (T’Qty)', `${fmt(row.quantity)} pcs`],
+    ['Tổng khối lượng', `${fmt(row.total_weight)} kg`], ['Tổ phần giao', row.allocation ? `Tổ ${row.allocation}` : '—'],
+    ['Ngày giao WO', progressDate(row.wo_date)], ['Profile / Dạng SP', [row.profile, row.product_type].filter(Boolean).join(' / ') || '—'],
+    ['Đơn trọng (U.Wt)', `${fmt(row.unit_weight)} kg`],
+  ];
+  const stages = projectStages.map((stage) => {
+    const data = projectStageValue(row, stage);
+    const stageStatus = data.optional ? 'Không yêu cầu công đoạn này' : data.complete ? 'Đã hoàn thành 100%' : data.actual > 0 ? `Đang thực hiện · ${data.percent}%` : 'Chưa thực hiện';
+    const tone = data.optional ? 'optional' : data.complete ? 'complete' : data.actual > 0 ? 'in-progress' : 'pending';
+    const quantity = data.optional ? 'Không áp dụng' : `${fmt(data.actual)} / ${fmt(data.planned)} pcs`;
+    return `<article class="project-detail-stage ${tone}"><div class="project-detail-stage-icon" aria-hidden="true">${stage.key === 'fitup' ? '⚒' : stage.key === 'welding' ? '♨' : stage.key === 'trial_assembly' ? '⌘' : stage.key === 'acceptance' ? '✓' : '⇢'}</div><div class="project-detail-stage-main"><div class="project-detail-stage-heading"><h4>${esc(stage.label)} <span>${esc(stage.fullLabel.replace(/^\d\.\s*/, ''))}</span></h4><strong>${esc(stageStatus)}</strong></div><div class="project-detail-stage-metrics"><span><small>Số lượng</small><b>${esc(quantity)}</b></span><span><small>Khối lượng</small><b>${fmt(data.weight)} kg</b></span><span><small>Ngày thực hiện</small><b>${esc(progressDate(data.date))}</b></span></div>${stage.key === 'handover' && (row.receiver || row.record_no) ? `<div class="project-delivery-meta">${row.receiver ? `<span>🏢 Đơn vị nhận: <b>${fmt(row.receiver)}</b></span>` : ''}${row.record_no ? `<span>▤ Số biên bản: <b>${fmt(row.record_no)}</b></span>` : ''}</div>` : ''}</div></article>`;
+  }).join('');
+  return `<dialog class="project-assembly-dialog" aria-labelledby="projectAssemblyTitle"><div class="project-dialog-header"><div class="project-dialog-symbol" aria-hidden="true">◇</div><div class="project-dialog-title"><div><h3 id="projectAssemblyTitle">Cấu kiện: ${fmt(row.part_no || row.item_id || 'Chưa có mã')}</h3><span class="status-pill ${status.tone}">${esc(status.label)}</span></div><p>Dự án: ${esc(state.currentProject)}${row.item ? ` | Hạng mục: ${fmt(row.item)}` : ''}</p></div><button class="project-dialog-close" type="button" data-close-project-dialog aria-label="Đóng">×</button></div><div class="project-dialog-scroll"><section class="project-technical-panel"><h4><span aria-hidden="true">ⓘ</span> Thông số kỹ thuật cấu kiện</h4><div class="project-technical-grid">${technical.map(([label, value]) => `<div class="project-technical-item"><span>${esc(label)}</span><strong>${fmt(value)}</strong></div>`).join('')}</div></section><section class="project-detail-progress"><h4><span aria-hidden="true">⌁</span> Tiến độ 5 công đoạn chế tạo (hành trình cấu kiện)</h4><div class="project-detail-stage-list">${stages}</div></section></div><div class="project-dialog-footer"><button class="button" type="button" data-close-project-dialog>Đóng</button></div></dialog>`;
+}
+function openProjectDetail(row) {
+  document.querySelector('.project-assembly-dialog')?.remove();
+  const page = document.querySelector('#page');
+  page.insertAdjacentHTML('beforeend', projectDetailDialog(row));
+  const dialog = page.querySelector('.project-assembly-dialog');
+  dialog.querySelectorAll('[data-close-project-dialog]').forEach((button) => button.addEventListener('click', () => dialog.close()));
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener('close', () => dialog.remove(), { once:true });
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+}
 function projectsPage() {
   const rows = state.progressData?.rows || [];
-  const query = document.querySelector('#projectSearch')?.value.trim().toLowerCase() || '';
-  const lotOptions = [...new Set(rows.map(projectLotCode).filter(Boolean))]
-    .sort((left, right) => left.localeCompare(right, 'vi', { numeric:true, sensitivity:'base' }));
-  const hasUnassignedLot = rows.some((row) => !projectLotCode(row));
-  const selectedLot = lotOptions.includes(state.projectLotFilter)
-    || (state.projectLotFilter === '__unassigned__' && hasUnassignedLot) ? state.projectLotFilter : '';
+  const query = state.projectSearch.trim();
+  const normalizedQuery = normalizeProjectSearch(query);
   const filtered = rows.filter((row) => {
-    const lot = projectLotCode(row);
-    const matchesLot = !selectedLot || (selectedLot === '__unassigned__' ? !lot : lot === selectedLot);
-    const matchesSearch = !query || [row.item,row.mh,row.drawing,row.part_no,row.profile,row.note].some((value) => String(value || '').toLowerCase().includes(query));
-    return matchesLot && matchesSearch;
+    const matchesSearch = !normalizedQuery || [row.item,row.mh,row.drawing,row.part_no,row.profile,row.note,row.allocation,row.size]
+      .some((value) => normalizeProjectSearch(value).includes(normalizedQuery));
+    const status = projectAssemblyStatus(row).label;
+    const matchesStatus = !state.projectStatusFilter || (state.projectStatusFilter === 'handover' ? status === 'Bàn giao' : state.projectStatusFilter === 'active' ? !['Bàn giao','Chưa bắt đầu'].includes(status) : status === 'Chưa bắt đầu');
+    return matchesSearch && matchesStatus;
   });
-  const completed = filtered.filter((row) => row.handover_qty != null && row.quantity != null && Number(row.handover_qty) >= Number(row.quantity)).length;
-  const columns = progressColumns;
-  return `${heading('PROJECT DELIVERY · QLDA','Quản lý tiến độ dự án','Theo dõi khối lượng theo hạng mục, cấu kiện và từng công đoạn sản xuất.',projectSelect('progress'))}
-    <div class="filter-toolbar project-filter-toolbar"><label class="search-box">${icon('search')}<input id="projectSearch" placeholder="Tìm hạng mục, bản vẽ, mã cấu kiện…" value="${esc(query)}"></label><label class="filter-label">Lot<select id="projectLotFilter" ${lotOptions.length || hasUnassignedLot ? '' : 'disabled'}><option value="">${lotOptions.length ? `Tất cả Lot (${lotOptions.length})` : 'Không phát hiện Lot'}</option>${lotOptions.map((lot) => `<option value="${esc(lot)}" ${selectedLot === lot ? 'selected' : ''}>${esc(projectLotLabel(lot))}</option>`).join('')}${hasUnassignedLot ? `<option value="__unassigned__" ${selectedLot === '__unassigned__' ? 'selected' : ''}>Chưa phân Lot</option>` : ''}</select></label><span class="source-chip">Nguồn: sheet Progress · header hàng 3 · dữ liệu từ hàng 4</span></div>
-    <div class="stats-grid compact">${statCard('Dòng tiến độ',filtered.length,'Theo bộ lọc hiện tại')}${statCard('Đã bàn giao',completed,'Theo SL bàn giao / T’Qty','green')}${statCard('Đang có dữ liệu',filtered.filter((row) => row.fitup_qty != null || row.welding_qty != null || row.trial_assembly_qty != null).length,'Có ghi nhận sản xuất','gold')}${statCard('File nguồn',new Set(filtered.map((row) => row.source_file).filter(Boolean)).size,'Workbook QLDA')}</div>
-    <div class="section-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Bảng tiến độ <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}${filtered.length !== rows.length ? ` / ${rows.length.toLocaleString('vi-VN')}` : ''}</span></h3></div></div>
-    <div class="table-panel">${tableMarkup(filtered,columns,{limit:500})}</div><p class="footnote">Không nhập vào báo cáo: A, C–D, T–AI, AS và BB đến cột cuối (bắt đầu từ Check 1). Cột B chỉ dùng để xác định mã dự án.</p>`;
+  const completed = filtered.filter((row) => projectAssemblyStatus(row).label === 'Bàn giao').length;
+  const active = filtered.filter((row) => !['Bàn giao','Chưa bắt đầu'].includes(projectAssemblyStatus(row).label)).length;
+  const pageSize = 100;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  state.projectPageIndex = Math.min(Math.max(state.projectPageIndex, 0), pageCount - 1);
+  const pageIndex = state.projectPageIndex;
+  const visible = filtered.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  const rowsMarkup = visible.map((row, offset) => {
+    const status = projectAssemblyStatus(row);
+    const index = pageIndex * pageSize + offset + 1;
+    return `<tr><td class="project-row-number">${fmt(index)}</td><td class="project-part-cell"><button type="button" class="project-part-link" data-project-detail-row="${esc(row.source_row)}">${fmt(row.part_no || row.item_id || '—')} <span aria-hidden="true">↗</span></button></td><td>${fmt(row.drawing)}</td><td>${fmt(row.item)}</td><td><span class="project-team-badge">${fmt(row.allocation)}</span></td><td><strong>${fmt(row.size)}</strong>${row.profile ? `<small>${fmt(row.profile)}</small>` : ''}</td><td class="project-number">${fmt(row.quantity)}</td><td class="project-number">${fmt(row.unit_weight)}</td><td class="project-number project-total-weight">${fmt(row.total_weight)}</td><td><span class="status-pill ${status.tone}">${esc(status.label)}</span></td>${projectStages.map((stage) => `<td class="project-stage-column ${stage.tone}">${projectStageCell(row, stage)}</td>`).join('')}<td class="project-action-column"><button type="button" class="project-detail-button" data-project-detail-row="${esc(row.source_row)}" aria-label="Xem chi tiết cấu kiện ${esc(row.part_no || '')}" title="Xem chi tiết">◎</button></td></tr>`;
+  }).join('');
+  return `${heading('PROJECT DELIVERY · QLDA','Quản lý dự án','Tra cứu cấu kiện và xem tiến độ 5 công đoạn trong một bảng tổng hợp.',projectSelect('progress'))}
+    <div class="project-catalog-toolbar"><label class="search-box project-catalog-search">${icon('search')}<input id="projectSearch" type="search" placeholder="Tìm mã cấu kiện, bản vẽ, hạng mục…" value="${esc(query)}"></label><label class="filter-label project-status-filter">Trạng thái<select id="projectStatusFilter"><option value="" ${!state.projectStatusFilter ? 'selected' : ''}>Tất cả trạng thái</option><option value="handover" ${state.projectStatusFilter === 'handover' ? 'selected' : ''}>Đã bàn giao</option><option value="active" ${state.projectStatusFilter === 'active' ? 'selected' : ''}>Đang thực hiện</option><option value="not-started" ${state.projectStatusFilter === 'not-started' ? 'selected' : ''}>Chưa bắt đầu</option></select></label><span class="source-chip">Nguồn: ${esc(rows[0]?.source_file || `${state.currentProject}.xlsx`)} · sheet Progress</span><div class="project-export-actions"><button class="button primary" id="exportProjectWorkbook" type="button" ${rows.length ? '' : 'disabled'}>${icon('download')}<span>Xuất Excel đã lọc cột</span></button><input id="projectExportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden><small>Chọn file QLDA gốc để giữ màu và định dạng.</small><span id="projectExportMessage" class="project-export-message" aria-live="polite"></span></div></div>
+    <div class="stats-grid compact project-progress-stats">${statCard('Cấu kiện',filtered.length,'Theo bộ lọc hiện tại')}${statCard('Đã bàn giao',completed,'Hoàn thành công đoạn 5','green')}${statCard('Đang thực hiện',active,'Đã có ghi nhận sản xuất','gold')}${statCard('Tổng khối lượng · kg',filtered.reduce((sum, row) => sum + (Number(row.total_weight) || 0), 0),'Theo cột Tổng KL')}</div>
+    <div class="section-heading project-progress-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Tiến độ cấu kiện <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}</span></h3></div><span class="count-chip">${filtered.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, filtered.length)} / ${filtered.length.toLocaleString('vi-VN')}` : '0 cấu kiện'}</span></div>
+    ${filtered.length ? `<div class="project-table-frame"><table class="project-progress-table"><thead><tr><th>STT</th><th>Số chi tiết (Mã CK)</th><th>Bản vẽ</th><th>Hạng mục</th><th>Tổ</th><th>Quy cách (Size)</th><th>T’Qty</th><th>Đơn trọng</th><th>Tổng KL (kg)</th><th>Trạng thái</th>${projectStages.map((stage) => `<th class="project-stage-column ${stage.tone}">${esc(stage.label)}</th>`).join('')}<th class="project-action-column">Thao tác</th></tr></thead><tbody>${rowsMarkup}</tbody></table></div><div class="btp-pagination project-pagination"><span>${filtered.length.toLocaleString('vi-VN')} cấu kiện${filtered.length !== rows.length ? ` · ${rows.length.toLocaleString('vi-VN')} toàn dự án` : ''}</span><div><button class="button" id="projectPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="projectNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>` : '<div class="empty-state"><strong>Không tìm thấy cấu kiện</strong><p>Hãy đổi từ khóa hoặc bộ lọc trạng thái.</p></div>'}
+    <p class="footnote">Bấm mã cấu kiện hoặc biểu tượng xem để mở thông số kỹ thuật và lịch sử từng công đoạn. Không nhập vào báo cáo: A, C–D, T–AI, AS và BB đến cột cuối (bắt đầu từ Check 1).</p>`;
 }
 function adminPage() {
   return `${heading('ACCESS CONTROL · ADMIN','Quản trị tài khoản & dữ liệu','Tạo tài khoản chỉ xem và nhập dữ liệu thực từ workbook trên máy tính của bạn.')}
@@ -598,8 +692,10 @@ function bindPage() {
   updateImportFileMode();
   document.querySelector('#projectFilter')?.addEventListener('change', async (event) => {
     state.currentProject = event.target.value;
-    state.projectLotFilter = '';
     state.materialLotFilter = '';
+    state.projectSearch = '';
+    state.projectStatusFilter = '';
+    state.projectPageIndex = 0;
     state.materialSelectedSheets = null;
     state.materialReceiptDateFilter = '';
     state.materialUnitFilter = '';
@@ -759,9 +855,92 @@ function bindPage() {
       button.disabled = filteredMaterialAuditRows().every((row) => !row.btp || !(getBtpShortageQuantity(row.btp) > 0));
     }
   });
-  const rerenderProjects = () => { const page = document.querySelector('#page'); const position = window.scrollY; page.innerHTML = projectsPage(); bindPage(); window.scrollTo(0,position); };
-  document.querySelector('#projectSearch')?.addEventListener('input', rerenderProjects);
-  document.querySelector('#projectLotFilter')?.addEventListener('change', (event) => { state.projectLotFilter = event.target.value; rerenderProjects(); });
+  const rerenderProjects = ({ restoreSearchFocus = false } = {}) => {
+    const page = document.querySelector('#page');
+    const position = window.scrollY;
+    const search = page?.querySelector('#projectSearch');
+    const selection = restoreSearchFocus && search ? search.selectionStart : null;
+    if (!page) return;
+    page.innerHTML = projectsPage();
+    bindPage();
+    if (restoreSearchFocus) {
+      const nextSearch = page.querySelector('#projectSearch');
+      nextSearch?.focus();
+      if (selection !== null) nextSearch?.setSelectionRange(selection, selection);
+    }
+    window.scrollTo(0, position);
+  };
+  document.querySelector('#projectSearch')?.addEventListener('input', (event) => {
+    state.projectSearch = event.currentTarget.value;
+    state.projectPageIndex = 0;
+    rerenderProjects({ restoreSearchFocus:true });
+  });
+  document.querySelector('#projectStatusFilter')?.addEventListener('change', (event) => {
+    state.projectStatusFilter = event.currentTarget.value;
+    state.projectPageIndex = 0;
+    rerenderProjects();
+  });
+  document.querySelector('#projectPrevPage')?.addEventListener('click', () => {
+    state.projectPageIndex = Math.max(0, state.projectPageIndex - 1);
+    rerenderProjects();
+  });
+  document.querySelector('#projectNextPage')?.addEventListener('click', () => {
+    state.projectPageIndex += 1;
+    rerenderProjects();
+  });
+  document.querySelectorAll('[data-project-detail-row]').forEach((button) => button.addEventListener('click', () => {
+    const sourceRow = Number(button.dataset.projectDetailRow);
+    const selectedRow = (state.progressData?.rows || []).find((row) => Number(row.source_row) === sourceRow);
+    if (selectedRow) openProjectDetail(selectedRow);
+  }));
+  const projectExportButton = document.querySelector('#exportProjectWorkbook');
+  const projectExportFile = document.querySelector('#projectExportFile');
+  const projectExportMessage = document.querySelector('#projectExportMessage');
+  projectExportButton?.addEventListener('click', () => projectExportFile?.click());
+  projectExportFile?.addEventListener('change', async (event) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    projectExportButton.disabled = true;
+    projectExportMessage.textContent = 'Đang đọc file gốc…';
+    projectExportMessage.className = 'project-export-message';
+    try {
+      if (!/\.xlsx$/i.test(file.name) || file.size <= 0 || file.size > 20 * 1024 * 1024) {
+        throw new Error('Chọn workbook .xlsx hợp lệ, dung lượng tối đa 20 MB.');
+      }
+      const fileProject = file.name.replace(/\.xlsx$/i, '').trim().toUpperCase();
+      if (fileProject !== String(state.currentProject).toUpperCase()) {
+        throw new Error(`Tên file phải là ${state.currentProject}.xlsx để xuất đúng dự án đang xem.`);
+      }
+      const ExcelJS = await loadExcelJsLibrary();
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await file.arrayBuffer());
+      const worksheet = workbook.getWorksheet('Progress');
+      if (!worksheet) throw new Error(`Workbook ${file.name} không có sheet Progress.`);
+      const lastColumn = Math.max(worksheet.columnCount, worksheet.columns.length);
+      if (lastColumn >= 54) worksheet.spliceColumns(54, lastColumn - 53);
+      [[45,1],[20,16],[3,2],[1,1]].forEach(([start, count]) => {
+        if (worksheet.columnCount >= start) worksheet.spliceColumns(start, Math.min(count, worksheet.columnCount - start + 1));
+      });
+      const output = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([output], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${state.currentProject}_QLDA_da_loai_cot.xlsx`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+      projectExportMessage.textContent = 'Đã xuất sheet Progress; màu sắc và định dạng gốc được giữ lại.';
+      projectExportMessage.className = 'project-export-message success-message';
+    } catch (error) {
+      projectExportMessage.textContent = error.message;
+      projectExportMessage.className = 'project-export-message error-message';
+    } finally {
+      projectExportButton.disabled = false;
+      event.currentTarget.value = '';
+    }
+  });
   document.querySelector('#overviewProjectSearch')?.addEventListener('input', (event) => {
     const query = normalizeProjectSearch(event.currentTarget.value.trim());
     const cards = [...document.querySelectorAll('[data-project-card]')];
@@ -778,7 +957,9 @@ function bindPage() {
   });
   document.querySelectorAll('[data-project]').forEach((link) => link.addEventListener('click', () => {
     if (state.currentProject !== link.dataset.project) {
-      state.projectLotFilter = '';
+      state.projectSearch = '';
+      state.projectStatusFilter = '';
+      state.projectPageIndex = 0;
       state.materialLotFilter = '';
       state.materialSelectedSheets = null;
       state.materialReceiptDateFilter = '';

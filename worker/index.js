@@ -439,6 +439,40 @@ async function deletePlFile(request, env) {
   return json({ project_code: projectCode, source_file: filename, deleted_rows: deletedRows });
 }
 
+async function deleteDriveSyncedFile(request, env) {
+  await requireDriveSync(request, env);
+  const body = await request.json().catch(() => null);
+  const category = body?.category === 'materials' || body?.category === 'projects' ? body.category : '';
+  const projectCode = safeProjectCode(body?.project_code);
+  const filename = String(body?.filename || '').trim();
+  const validName = category === 'materials'
+    ? /^[\w.-]{1,255}PL\.xlsx$/i.test(filename)
+    : category === 'projects' && /^[\w.-]{1,255}\.xlsx$/i.test(filename) && !/PL\.xlsx$/i.test(filename);
+  if (!validName) throw new HttpError(400, 'Loại dữ liệu hoặc tên workbook Drive không hợp lệ.');
+  if (projectCode !== projectCodeFromFilename(filename, category)) {
+    throw new HttpError(400, 'Mã dự án không khớp với tên workbook Drive.');
+  }
+
+  const statements = category === 'projects'
+    ? [
+      env.DB.prepare('DELETE FROM project_progress WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
+      env.DB.prepare("DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category = 'projects'").bind(projectCode, filename),
+      projectSourceFallbackStatement(env, projectCode, filename),
+      pruneEmptyProjectStatement(env, projectCode),
+    ]
+    : [
+      env.DB.prepare('DELETE FROM materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
+      env.DB.prepare('DELETE FROM btp_materials WHERE project_code = ? AND source_file = ? COLLATE NOCASE').bind(projectCode, filename),
+      env.DB.prepare("DELETE FROM import_runs WHERE project_code = ? AND source_file = ? COLLATE NOCASE AND category IN ('materials', 'btp')").bind(projectCode, filename),
+      projectSourceFallbackStatement(env, projectCode, filename),
+      pruneEmptyProjectStatement(env, projectCode),
+    ];
+  const results = await env.DB.batch(statements);
+  const deletedRows = results.slice(0, category === 'projects' ? 1 : 2)
+    .reduce((total, result) => total + Number(result.meta?.changes || 0), 0);
+  return json({ project_code: projectCode, source_file: filename, category, deleted_rows: deletedRows, removed: true });
+}
+
 async function importWorkbook(request, env, category) {
   const contentType = request.headers.get('Content-Type') || '';
   if (category === 'projects' && contentType.toLowerCase().includes('application/json')) {
@@ -815,6 +849,7 @@ async function route(request, env) {
     await requireDriveSync(request, env);
     return json({ ok: true, scope: 'pl-btp-qlda-import' });
   }
+  if (request.method === 'POST' && path === '/api/admin/drive-sync/delete') return deleteDriveSyncedFile(request, env);
   if (request.method === 'GET' && path === '/api/projects') {
     return json({ projects: await listProjects(env) });
   }
