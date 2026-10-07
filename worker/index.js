@@ -3,7 +3,7 @@ const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const SESSION_SECONDS = 8 * 60 * 60;
 const MATERIAL_COLUMNS = [
   'project_code', 'source_file', 'source_sheet', 'source_row', 'drawing', 'assembly',
-  'description', 'part_no', 'size', 'scope', 'quantity', 'weight', 'received',
+  'description', 'part_no', 'cutting_mark', 'material', 'size', 'lot', 'scope', 'quantity', 'weight', 'received',
   'remaining', 'as_symbol', 'delivery_date', 'issue_dates', 'is_main', 'parent', 'note', 'status',
 ];
 const MATERIAL_IMPORT_COLUMNS = MATERIAL_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
@@ -48,7 +48,7 @@ const PROJECT_IMPORT_COLUMNS = PROGRESS_COLUMNS.filter((column) => !['project_co
 // runs under its per-execution time limit; the caller still caps JSON payloads.
 const PROJECT_IMPORT_CHUNK_SIZE = 1000;
 const MATERIAL_FIELDS = {
-  2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 7: 'size', 12: 'quantity',
+  2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 6: 'cutting_mark', 7: 'size', 9: 'material', 12: 'quantity',
   14: 'weight', 15: 'scope', 20: 'received', 21: 'remaining',
 };
 
@@ -904,7 +904,7 @@ async function importMaterials(request, env) {
            AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
       ).bind(manifest.project_code, manifest.source_file, importId, startRow,
         Math.min(startRow + commitBatchSize, Number(manifest.expected_rows)), importId, runId) : env.DB.prepare(
-        `INSERT INTO materials (${insertColumns}) SELECT ?, ?, source_sheet, source_row, drawing, assembly, description, part_no, size, scope, quantity, weight, received, remaining, as_symbol, delivery_date, issue_dates, is_main, parent, note, status FROM material_import_rows
+        `INSERT INTO materials (${insertColumns}) SELECT ?, ?, source_sheet, source_row, drawing, assembly, description, part_no, cutting_mark, material, size, lot, scope, quantity, weight, received, remaining, as_symbol, delivery_date, issue_dates, is_main, parent, note, status FROM material_import_rows
          WHERE import_id = ? AND row_index >= ? AND row_index < ?
            AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
       ).bind(manifest.project_code, manifest.source_file, importId, startRow,

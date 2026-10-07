@@ -4,7 +4,7 @@ export const MAX_MATERIAL_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_MATERIAL_FILE_MB = 20;
 
 const MATERIAL_FIELDS = {
-  2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 7: 'size', 12: 'quantity',
+  2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 6: 'cutting_mark', 7: 'size', 9: 'material', 12: 'quantity',
   14: 'weight', 15: 'scope', 20: 'received', 21: 'remaining',
 };
 
@@ -12,11 +12,13 @@ const MATERIAL_HEADER_ALIASES = {
   drawing: ['drawingnumber', 'drawingno'],
   assembly: ['assemblyno', 'assemblynumber'],
   description: ['description'],
+  material: ['material', 'grade', 'materialgrade'],
   part_no: ['partno', 'partno1', 'partnumber', 'detailno', 'detailcode', 'componentno', 'componentnumber'],
   size: ['size'],
   quantity: ['tqty', 'totalqty', 'quantity', 'tquantity'],
   weight: ['tweight', 'totalweight'],
   scope: ['scopeofsteelwork', 'scopeofwork', 'scope', 'phamvicongviec'],
+  lot: ['lot', 'lotnumber', 'lotno'],
   received: ['danhan', 'received', 'receivedqty'],
   remaining: ['conthieu', 'remaining', 'balance'],
   note: ['note', 'remark', 'remarks', 'plremark', 'comment', 'comments', 'ghichu'],
@@ -145,6 +147,11 @@ function materialColumns(header) {
   }).sort((left, right) => left.priority - right.priority || left.column - right.column).map(({ column }) => column);
   if (!scopeColumns.length && !columns[15] && !normalizeHeader(header[14])) scopeColumns.push(15);
   if (scopeColumns.length) columns[scopeColumns[0]] = 'scope';
+  const lotScopeColumns = header.flatMap((value, index) => {
+    const normalized = normalizeHeader(value);
+    const match = normalized.match(/^scope(?:ofsteelwork|ofwork)?lot(\d+)$/);
+    return match && !normalized.includes('painting') ? [{ lot:`LOT${match[1]}`, column:index + 1 }] : [];
+  });
   for (const [column, field] of Object.entries(MATERIAL_FIELDS)) {
     const headerValue = header[Number(column) - 1];
     if (!Object.values(columns).includes(field) && !columns[column] && !normalizeHeader(headerValue)) columns[column] = field;
@@ -155,7 +162,25 @@ function materialColumns(header) {
     return normalized.startsWith('dateissue') || normalized.startsWith('issuedate') || normalized.startsWith('dateissued')
       ? [index + 1] : [];
   });
-  return { columns, scopeColumns, deliveryDate, receiptDates };
+  return { columns, scopeColumns, lotScopeColumns, deliveryDate, receiptDates };
+}
+
+function explicitLotCode(value) {
+  const match = String(value ?? '').trim().match(/^LOT\s*[-_ ]?\s*(\d+)$/i);
+  return match ? `LOT${match[1]}` : '';
+}
+
+function assignedLot(value) {
+  if (value === null || value === undefined || value === '') return false;
+  if (typeof value === 'number') return value > 0;
+  return !['-', '—', '–', 'N/A', 'NA', '0'].includes(String(value).trim().toLocaleUpperCase());
+}
+
+function sheetTitleLot(rows) {
+  const title = rows.slice(0, 8).flat().map((value) => String(value ?? ''))
+    .find((value) => /item\s*name|ten\s*hang\s*muc/i.test(value));
+  const match = String(title ?? '').match(/\bLOT\s*[-_ ]?\s*(\d+)\b/i);
+  return match ? `LOT${match[1]}` : '';
 }
 
 function btpColumns(header) {
@@ -377,6 +402,7 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
       continue;
     }
     if (name === 'cover' || name.includes('backup')) continue;
+    const titleLot = sheetTitleLot(rows);
     let headerIndex = -1;
     let symbolColumn = -1;
     for (let index = 0; index < Math.min(rows.length, 35); index += 1) {
@@ -402,7 +428,16 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
         fields[field] = normalizeImportNumber(fields[field]);
       }
       fields.part_no = normalizePartNumber(workbook.Sheets[sheetName], rowIndex, raw[4], xlsx);
+      fields.cutting_mark = normalizeValue(raw[5]);
       fields.scope = sourceColumns.scopeColumns.map((column) => normalizeValue(raw[column - 1])).find(Boolean) ?? fields.scope ?? null;
+      const lotCodes = new Set();
+      const explicitRowLot = explicitLotCode(fields.lot) || explicitLotCode(fields.note);
+      if (explicitRowLot) lotCodes.add(explicitRowLot);
+      for (const lotColumn of sourceColumns.lotScopeColumns) {
+        if (assignedLot(raw[lotColumn.column - 1])) lotCodes.add(lotColumn.lot);
+      }
+      if (!lotCodes.size && titleLot) lotCodes.add(titleLot);
+      fields.lot = [...lotCodes].join(',') || null;
       fields.delivery_date = sourceColumns.deliveryDate ? normalizeMaterialDate(raw[sourceColumns.deliveryDate - 1], xlsx) : null;
       const receiptDates = sortedIssueDates(raw, sourceColumns.receiptDates, xlsx);
       fields.delivery_date = receiptDates || (sourceColumns.deliveryDate

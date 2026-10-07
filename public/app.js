@@ -50,8 +50,11 @@ function projectLotCode(row) {
 }
 function projectLotLabel(code) { return `Lot ${String(code).replace(/^LOT/i, '')}`; }
 function materialAuditLotCodes(row) {
-  const linkedLots = [...new Set((row?.progress || []).map(projectLotCode).filter(Boolean))];
-  if (linkedLots.length) return linkedLots;
+  const linkedLots = (row?.progress || []).map(projectLotCode).filter(Boolean);
+  const bomLines = [row?.bomLine, ...(Array.isArray(row?.bomLines) ? row.bomLines : [])].filter(Boolean);
+  const bomLots = bomLines.flatMap((line) => String(line?.lot || '').split(/[,;|]/).map((value) => value.trim().toUpperCase()).filter((value) => /^LOT\d+$/.test(value)));
+  const assignedLots = [...new Set([...linkedLots, ...bomLots])];
+  if (assignedLots.length) return assignedLots.sort((left, right) => left.localeCompare(right, 'vi', { numeric:true }));
   const sourceSheets = [row?.bom_source_sheet, row?.btp_source_sheet, row?.source_sheet, row?.bomLine?.source_sheet, row?.bomParent?.source_sheet, row?.btp?.source_sheet];
   for (const sheet of sourceSheets) {
     const explicitLot = projectLotCode({ mh:sheet });
@@ -295,10 +298,23 @@ function auditReceiptEvents(row) {
   const entries = String(row?.btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean);
   return entries.length ? `<span class="audit-receipt-list">${entries.map((event) => `<span>${fmt(event.replace(/:\s*/, ': '))}</span>`).join('')}</span>` : '<span class="muted">Chưa có ngày nhận</span>';
 }
+function auditBomComparisonNote(row) {
+  if (!row?.btp || row.bomStatus !== 'matched') return '';
+  const differences = [];
+  const plannedQuantity = Number(row.btp.design_quantity);
+  if (Number.isFinite(plannedQuantity) && Number.isFinite(row.bomQuantity) && Math.abs(plannedQuantity - row.bomQuantity) > 1e-6) {
+    differences.push(`SL PL ${fmt(row.bomQuantity)} / BTP ${fmt(plannedQuantity)}`);
+  }
+  const plannedWeight = Number(row.btp.total_weight);
+  if (Number.isFinite(plannedWeight) && Number.isFinite(row.bomWeight) && Math.abs(plannedWeight - row.bomWeight) > 0.1) {
+    differences.push(`KL PL ${fmt(row.bomWeight)} kg / BTP ${fmt(plannedWeight)} kg`);
+  }
+  return differences.length ? `Lệch dữ liệu BOM: ${differences.join(' · ')}` : '';
+}
 function auditDetailMatchesSearch(row, query) {
   if (!query) return false;
   const values = row.btp
-    ? [row.btp.part_no,row.btp.material_type,row.btp.description,row.btp.material,row.btp.unit,row.btp.size,row.btp.length_mm,row.btp.unit_weight,row.btp.total_weight,row.btp.design_quantity,row.btp.received,row.btp.remaining,row.btp.daily_progress,row.btp.joint_check,row.btp.status,row.btp.note,row.bomLine?.part_no,row.bomLine?.description,row.bomLine?.size,row.bomLine?.note,row.bomParent?.note]
+    ? [row.btp.part_no,row.btp.material_type,row.btp.description,row.btp.material,row.btp.unit,row.btp.size,row.btp.length_mm,row.btp.unit_weight,row.btp.total_weight,row.btp.design_quantity,row.btp.received,row.btp.remaining,row.btp.daily_progress,row.btp.joint_check,row.btp.status,row.btp.note,row.bomParentLabel,row.bomLine?.part_no,row.bomLine?.description,row.bomLine?.size,row.bomLine?.note,row.bomParent?.note]
     : [row.bomLine?.part_no,row.bomLine?.description,row.bomLine?.size,row.bomLine?.note,row.bomParent?.note];
   return values.filter((value) => value !== null && value !== undefined).join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase());
 }
@@ -316,7 +332,7 @@ function auditBtpTableRowMarkup(row, query = '') {
   const typeClass = materialType.includes('shape') ? 'shape' : materialType.includes('plate') ? 'plate' : '';
   const partLabel = btp.part_no || btp.description || '—';
   const partNo = query ? highlightMatch(partLabel, query) : fmt(partLabel);
-  const note = [...new Set([row.bomNote, row.bomLine?.note, row.bomParent?.note, btp.note].map((value) => String(value || '').trim()).filter(Boolean))].join(' | ');
+  const note = [...new Set([row.bomNote, row.bomLine?.note, row.bomParent?.note, btp.note, auditBomComparisonNote(row)].map((value) => String(value || '').trim()).filter(Boolean))].join(' | ');
   return `<tr class="${[remaining === 0 ? 'btp-complete-row' : '',matched ? 'search-match-row' : ''].filter(Boolean).join(' ')}"><td class="btp-frozen-code audit-code">${partNo}</td><td><span class="btp-type-chip ${typeClass}">${fmt(btp.material_type)}</span></td><td><span class="btp-unit-chip">${fmt(btp.unit)}</span></td><td>${fmt(btp.size)}</td><td class="numeric-cell">${fmt(btp.length_mm)}</td><td class="numeric-cell">${fmt(btp.design_quantity)}</td><td class="numeric-cell received-value">${fmt(btp.received)}</td><td class="numeric-cell ${remaining > 0 ? 'shortage-value' : ''}">${fmt(remaining)}</td><td class="audit-receipt-cell">${auditReceiptEvents(row)}</td><td>${fmt(btp.joint_check)}</td><td><span class="status-pill ${auditStatusClass(status)}">${esc(status)}</span></td><td class="audit-description">${fmt(note)}</td></tr>`;
 }
 function auditSearchPreviewMarkup(row, query) {
@@ -338,7 +354,7 @@ function auditSearchPreviewMarkup(row, query) {
     ['Tiến độ theo ngày', btp ? auditReceiptEvents(row) : '<span class="muted">Chưa có ngày</span>'],
     ['Ktra nối', fmt(btp?.joint_check)],
     ['Trạng thái', `<span class="status-pill ${btp ? auditStatusClass(status) : 'danger'}">${esc(status)}</span>`],
-    ['Ghi chú', fmt([row.bomNote, row.bomLine?.note, row.bomParent?.note, btp?.note].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join(' | ') || (btp ? '' : 'BOM chưa có dòng BTP'))],
+    ['Ghi chú', fmt([row.bomNote, row.bomLine?.note, row.bomParent?.note, btp?.note, auditBomComparisonNote(row)].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join(' | ') || (btp ? '' : 'BOM chưa có dòng BTP'))],
   ];
   return `<span class="bom-search-match-line">${cells.map(([label, value, extra = '']) => `<span class="audit-search-cell ${extra}"><small>${label}</small><b>${value}</b></span>`).join('')}</span>`;
 }
@@ -346,7 +362,7 @@ function auditBomGroupKey(row) {
   const parent = row.bomParent;
   const sheet = materialSheetName(row.btp_source_sheet || row.source_sheet);
   return parent?.assembly
-    ? `${row.bom_source_file || parent.source_file || row.source_file}|${materialSheetName(parent.source_sheet || row.source_sheet)}|${parent.assembly}`
+    ? `${row.bom_source_file || parent.source_file || row.source_file}|${materialSheetName(parent.source_sheet || row.source_sheet)}|${row.bomParentLabel || parent.assembly}`
     : `${row.btp_source_file || row.source_file}|${sheet}|unlinked|${row.btp?.part_no || row.btp?.source_row || row.btp?.description || row.bomLine?.part_no || row.bomLine?.source_row || ''}`;
 }
 function auditBomGroups(rows, contextRows = rows, query = '') {
@@ -368,7 +384,7 @@ function auditBomGroupMarkup({ key, rows, detailRows = rows, query = '' }) {
   const first = detailRows[0] || rows[0];
   const parent = first?.bomParent;
   const sheet = materialSheetName(first?.btp_source_sheet || parent?.source_sheet || first?.source_sheet);
-  const assembly = parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
+  const assembly = first?.bomParentLabel || parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
   const btpRows = detailRows.filter((row) => row.btp);
   const btpCount = btpRows.length;
   const receivedCount = btpRows.filter((row) => Number(row.btp.received) > 0).length;
@@ -394,7 +410,7 @@ function btpPrintRowMarkup(row) {
   const part = btp?.part_no || btp?.description || row.bomLine?.part_no || row.bomLine?.description || '—';
   const remaining = btp ? getBtpShortageQuantity(btp) : null;
   const status = btp ? (btp.status || auditStatus(row)) : 'Chưa có BTP';
-  const note = [...new Set([row.bomNote, row.bomLine?.note, row.bomParent?.note, btp?.note].map((value) => String(value || '').trim()).filter(Boolean))].join(' | ');
+  const note = [...new Set([row.bomNote, row.bomLine?.note, row.bomParent?.note, btp?.note, auditBomComparisonNote(row)].map((value) => String(value || '').trim()).filter(Boolean))].join(' | ');
   const events = String(btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean).map((event) => esc(event)).join('<br>') || '—';
   const values = [
     fmt(part), fmt(btp?.material_type), fmt(btp?.unit), fmt(btp?.size), fmt(btp?.length_mm),
@@ -411,7 +427,7 @@ function btpPrintGroupMarkup(group, index) {
   const designTotal = btpRows.reduce((sum, row) => sum + (Number(row.btp.design_quantity) || 0), 0);
   const receivedTotal = btpRows.reduce((sum, row) => sum + (Number(row.btp.received) || 0), 0);
   const remainingTotal = btpRows.reduce((sum, row) => sum + (getBtpShortageQuantity(row.btp) || 0), 0);
-  const assembly = parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
+  const assembly = first?.bomParentLabel || parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
   const drawing = parent?.drawing || first?.bomLine?.drawing || '';
   const item = parent?.item || first?.bomLine?.item || '';
   const size = parent?.size || first?.bomLine?.size || '';

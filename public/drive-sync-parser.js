@@ -4,6 +4,10 @@ function key(value) {
   return String(value ?? '').trim().toLocaleUpperCase();
 }
 
+function matchText(value) {
+  return key(value).replace(/[^A-Z0-9]/g, '');
+}
+
 function materialSheetName(value) {
   return String(value ?? '').trim().replace(/^BTP[-_\s]*/i, '').trim();
 }
@@ -43,6 +47,14 @@ function lookupUnique(index, indexKey) {
   return { row:null, ambiguous:matches.length > 1 };
 }
 
+function lookupParent(index, indexKey) {
+  const matches = index.get(indexKey) || [];
+  if (!matches.length) return { row:null, ambiguous:false };
+  const parentKeys = new Set(matches.map((row) => `${scopeKey(row)}|${key(row?.assembly)}`));
+  if (parentKeys.size === 1) return { row:matches[0], ambiguous:false };
+  return { row:null, ambiguous:true };
+}
+
 function prefixCodes(value) {
   const parts = key(value).split('-').filter(Boolean);
   return Array.from({ length:Math.max(0, parts.length - 1) }, (_, index) => parts.slice(0, parts.length - index - 1).join('-'));
@@ -55,6 +67,9 @@ function indexBom(materialRows) {
   const childrenByScope = new Map();
   const childrenBySheet = new Map();
   const childrenByCode = new Map();
+  const childrenByCuttingMarkScope = new Map();
+  const childrenByCuttingMarkSheet = new Map();
+  const childrenByCuttingMark = new Map();
   const mainRows = [];
   const childRows = [];
   for (const row of Array.isArray(materialRows) ? materialRows : []) {
@@ -63,15 +78,21 @@ function indexBom(materialRows) {
       addIndex(mainsByScope, `${scopeKey(row)}|${key(row.assembly)}`, row);
       addIndex(mainsBySheet, `${key(materialSheetName(row.source_sheet))}|${key(row.assembly)}`, row);
       addIndex(mainsByAssembly, key(row.assembly), row);
-    } else if (row?.part_no && !isDrawingMarkingPlaceholder(row.part_no)) {
+    } else if ((row?.part_no || row?.cutting_mark) && !isDrawingMarkingPlaceholder(row.part_no)) {
       childRows.push(row);
       const childKey = `${key(row.parent)}|${key(row.part_no)}`;
       addIndex(childrenByScope, `${scopeKey(row)}|${childKey}`, row);
       addIndex(childrenBySheet, `${key(materialSheetName(row.source_sheet))}|${childKey}`, row);
       addIndex(childrenByCode, childKey, row);
+      if (row.cutting_mark) {
+        const mark = key(row.cutting_mark);
+        addIndex(childrenByCuttingMarkScope, `${scopeKey(row)}|${mark}`, row);
+        addIndex(childrenByCuttingMarkSheet, `${key(materialSheetName(row.source_sheet))}|${mark}`, row);
+        addIndex(childrenByCuttingMark, mark, row);
+      }
     }
   }
-  return { mainRows, childRows, mainsByScope, mainsBySheet, mainsByAssembly, childrenByScope, childrenBySheet, childrenByCode };
+  return { mainRows, childRows, mainsByScope, mainsBySheet, mainsByAssembly, childrenByScope, childrenBySheet, childrenByCode, childrenByCuttingMarkScope, childrenByCuttingMarkSheet, childrenByCuttingMark };
 }
 
 function createMaterialLinkIndexes(materialRows) {
@@ -131,18 +152,74 @@ function findProgressForAssembly(parent, progressRows) {
 }
 
 function linkBtpToBom(row, materialRows, indexes = indexBom(materialRows)) {
+  const cuttingMark = key(row?.part_no);
+  let cuttingMarkMismatch = false;
+  if (cuttingMark) {
+    let bomLines = indexes.childrenByCuttingMarkScope.get(`${scopeKey(row)}|${cuttingMark}`) || [];
+    if (!bomLines.length) bomLines = indexes.childrenByCuttingMarkSheet.get(`${key(materialSheetName(row?.source_sheet))}|${cuttingMark}`) || [];
+    if (!bomLines.length) bomLines = indexes.childrenByCuttingMark.get(cuttingMark) || [];
+    if (bomLines.length) {
+      let candidates = [...bomLines];
+      for (const field of ['description', 'size', 'material']) {
+        const target = matchText(row?.[field]);
+        if (!target) continue;
+        const comparable = candidates.filter((line) => matchText(line?.[field]));
+        if (!comparable.length) continue;
+        const exact = comparable.filter((line) => matchText(line?.[field]) === target);
+        if (!exact.length) {
+          cuttingMarkMismatch = true;
+          break;
+        }
+        candidates = exact;
+      }
+      if (!cuttingMarkMismatch) {
+        const parents = candidates.map((line) => findParentForBomLine(line, indexes));
+        const parentKeys = new Set(parents.filter(Boolean).map((parent) => `${scopeKey(parent)}|${key(parent.assembly)}`));
+        const uniqueParents = [...new Map(parents.filter(Boolean).map((candidate) => [`${scopeKey(candidate)}|${key(candidate.assembly)}`, candidate])).values()];
+        const parent = uniqueParents[0] || null;
+        const specKeys = new Set(candidates.map((line) => [line?.description, line?.size, line?.material].map(matchText).join('|')));
+        const bomQuantity = candidates.map((line) => Number(line.quantity));
+        const btpQuantity = Number(row?.design_quantity);
+        const aggregateQuantityMatches = bomQuantity.length > 0 && bomQuantity.every(Number.isFinite)
+          && Number.isFinite(btpQuantity)
+          && Math.abs(bomQuantity.reduce((sum, value) => sum + value, 0) - btpQuantity) < 1e-6;
+        const sharedParentMatch = uniqueParents.length > 1
+          && parents.every(Boolean)
+          && specKeys.size === 1
+          && aggregateQuantityMatches;
+        const ambiguous = !parent || parents.some((candidate) => !candidate)
+          || (parentKeys.size !== 1 && !sharedParentMatch)
+          || specKeys.size !== 1;
+        return {
+          parent,
+          parents:uniqueParents,
+          parentLabel:!ambiguous && uniqueParents.length > 1 ? uniqueParents.map((candidate) => candidate.assembly).join(' · ') : '',
+          bomLine:candidates[0] || null,
+          bomLines:candidates,
+          childCode:cuttingMark,
+          bomStatus:ambiguous ? 'ambiguous' : 'matched',
+          bomMatch:'cutting-mark',
+          progress:{ rows:[], status:'missing', match:'missing' },
+        };
+      }
+    }
+  }
   const parentMatch = findParent(row, indexes);
   const childMatch = findBomLine(row, parentMatch.parent, indexes);
   const progress = { rows:[], status:'missing', match:'missing' };
   const bomStatus = parentMatch.parent
     ? childMatch.bomLine ? 'matched' : childMatch.ambiguous ? 'ambiguous' : 'parent-only'
     : parentMatch.ambiguous ? 'ambiguous' : 'missing';
+  const resolvedBomStatus = cuttingMarkMismatch && !childMatch.bomLine && !childMatch.ambiguous ? 'ambiguous' : bomStatus;
   return {
     parent:parentMatch.parent,
+    parents:parentMatch.parent ? [parentMatch.parent] : [],
+    parentLabel:'',
     bomLine:childMatch.bomLine,
+    bomLines:childMatch.bomLine ? [childMatch.bomLine] : [],
     childCode:parentMatch.parent ? key(row?.part_no).slice(String(parentMatch.parent.assembly ?? '').trim().length + 1) : '',
-    bomStatus,
-    bomMatch:childMatch.bomLine ? childMatch.match : parentMatch.match,
+    bomStatus:resolvedBomStatus,
+    bomMatch:childMatch.bomLine ? childMatch.match : cuttingMarkMismatch ? 'cutting-mark-spec-mismatch' : parentMatch.match,
     progress,
   };
 }
@@ -150,15 +227,34 @@ function linkBtpToBom(row, materialRows, indexes = indexBom(materialRows)) {
 function findParentForBomLine(row, indexes) {
   const parentCode = key(row?.parent || row?.assembly);
   if (!parentCode) return null;
-  const exact = lookupUnique(indexes.mainsByScope, `${scopeKey(row)}|${parentCode}`);
+  // A project workbook may repeat one assembly for several lots. Those rows
+  // still identify the same parent; treating them as ambiguous prevents the
+  // cutting-mark link from being attached to the BOM tree.
+  const exact = lookupParent(indexes.mainsByScope, `${scopeKey(row)}|${parentCode}`);
   if (exact.row) return exact.row;
-  const sameSheet = lookupUnique(indexes.mainsBySheet, `${key(materialSheetName(row?.source_sheet))}|${parentCode}`);
+  const sameSheet = lookupParent(indexes.mainsBySheet, `${key(materialSheetName(row?.source_sheet))}|${parentCode}`);
   if (sameSheet.row) return sameSheet.row;
-  return lookupUnique(indexes.mainsByAssembly, parentCode).row;
+  return lookupParent(indexes.mainsByAssembly, parentCode).row;
 }
 
 function rowIdentity(row) {
   return `${scopeKey(row)}|${Number(row?.source_row) || 0}|${key(row?.part_no)}`;
+}
+
+function findProgressForParents(parents, progressRows) {
+  const linkedParents = Array.isArray(parents) ? parents.filter(Boolean) : [];
+  if (!linkedParents.length) return { rows:[], status:'missing', match:'missing' };
+  const matches = linkedParents.map((parent) => findProgressForAssembly(parent, progressRows));
+  const rows = [...new Map(matches.flatMap((match) => match.rows).map((row) => [rowIdentity(row), row])).values()];
+  const status = matches.every((match) => match.status === 'matched')
+    ? 'matched'
+    : matches.some((match) => match.status === 'ambiguous') ? 'ambiguous'
+      : matches.some((match) => match.status === 'matched') ? 'partial' : 'missing';
+  return {
+    rows,
+    status,
+    match:linkedParents.length > 1 ? 'multiple-parent-assemblies' : matches[0].match,
+  };
 }
 
 function buildMaterialAuditRows({ materialRows = [], btpRows = [], progressRows = [] } = {}) {
@@ -169,9 +265,13 @@ function buildMaterialAuditRows({ materialRows = [], btpRows = [], progressRows 
   const usedBomLines = new Set();
   const rows = btp.map((btpRow) => {
     const linkage = linkBtpToBom(btpRow, materials, indexes);
-    if (linkage.bomLine) usedBomLines.add(rowIdentity(linkage.bomLine));
-    const qlda = findProgressForAssembly(linkage.parent, progress);
+    const bomLines = linkage.bomLines?.length ? linkage.bomLines : linkage.bomLine ? [linkage.bomLine] : [];
+    for (const bomLine of bomLines) usedBomLines.add(rowIdentity(bomLine));
+    const parents = linkage.parents?.length ? linkage.parents : linkage.parent ? [linkage.parent] : [];
+    const qlda = findProgressForParents(parents, progress);
     linkage.progress = qlda;
+    const bomQuantities = bomLines.map((line) => Number(line.quantity)).filter(Number.isFinite);
+    const bomWeights = bomLines.map((line) => Number(line.weight)).filter(Number.isFinite);
     return {
       source_file:linkage.bomLine?.source_file || linkage.parent?.source_file || btpRow.source_file || '',
       source_sheet:linkage.bomLine?.source_sheet || linkage.parent?.source_sheet || materialSheetName(btpRow.source_sheet),
@@ -180,8 +280,12 @@ function buildMaterialAuditRows({ materialRows = [], btpRows = [], progressRows 
       bom_source_file:linkage.bomLine?.source_file || linkage.parent?.source_file || '',
       bom_source_sheet:linkage.bomLine?.source_sheet || linkage.parent?.source_sheet || '',
       bomParent:linkage.parent,
+      bomParentLabel:linkage.parentLabel || linkage.parent?.assembly || '',
       bomLine:linkage.bomLine,
-      bomNote:linkage.bomLine?.note || linkage.parent?.note || '',
+      bomLines,
+      bomQuantity:bomLines.length && bomQuantities.length === bomLines.length ? bomQuantities.reduce((sum, value) => sum + value, 0) : null,
+      bomWeight:bomLines.length && bomWeights.length === bomLines.length ? bomWeights.reduce((sum, value) => sum + value, 0) : null,
+      bomNote:[...new Set([...bomLines.map((line) => line.note), ...parents.map((parent) => parent.note)].map((value) => String(value || '').trim()).filter(Boolean))].join(' | '),
       btp:btpRow,
       progress:qlda.rows,
       bomStatus:linkage.bomStatus,
@@ -217,7 +321,9 @@ function buildMaterialAuditRows({ materialRows = [], btpRows = [], progressRows 
 function materialAuditRowSearchText(row) {
   const values = [
     row?.source_file, row?.source_sheet, row?.bomParent?.assembly, row?.bomParent?.drawing,
+    row?.bomParentLabel,
     row?.bomLine?.part_no, row?.bomLine?.description, row?.bomLine?.size,
+    ...(Array.isArray(row?.bomLines) ? row.bomLines.flatMap((line) => [line.part_no, line.cutting_mark, line.description, line.size]) : []),
     row?.bomLine?.note, row?.bomParent?.note, row?.bomNote,
     row?.btp?.part_no, row?.btp?.material_type, row?.btp?.description, row?.btp?.material,
     row?.btp?.unit, row?.btp?.size, row?.btp?.note,
@@ -230,7 +336,7 @@ const MAX_MATERIAL_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_MATERIAL_FILE_MB = 20;
 
 const MATERIAL_FIELDS = {
-  2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 7: 'size', 12: 'quantity',
+  2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 6: 'cutting_mark', 7: 'size', 9: 'material', 12: 'quantity',
   14: 'weight', 15: 'scope', 20: 'received', 21: 'remaining',
 };
 
@@ -238,11 +344,13 @@ const MATERIAL_HEADER_ALIASES = {
   drawing: ['drawingnumber', 'drawingno'],
   assembly: ['assemblyno', 'assemblynumber'],
   description: ['description'],
+  material: ['material', 'grade', 'materialgrade'],
   part_no: ['partno', 'partno1', 'partnumber', 'detailno', 'detailcode', 'componentno', 'componentnumber'],
   size: ['size'],
   quantity: ['tqty', 'totalqty', 'quantity', 'tquantity'],
   weight: ['tweight', 'totalweight'],
   scope: ['scopeofsteelwork', 'scopeofwork', 'scope', 'phamvicongviec'],
+  lot: ['lot', 'lotnumber', 'lotno'],
   received: ['danhan', 'received', 'receivedqty'],
   remaining: ['conthieu', 'remaining', 'balance'],
   note: ['note', 'remark', 'remarks', 'plremark', 'comment', 'comments', 'ghichu'],
@@ -371,6 +479,11 @@ function materialColumns(header) {
   }).sort((left, right) => left.priority - right.priority || left.column - right.column).map(({ column }) => column);
   if (!scopeColumns.length && !columns[15] && !normalizeHeader(header[14])) scopeColumns.push(15);
   if (scopeColumns.length) columns[scopeColumns[0]] = 'scope';
+  const lotScopeColumns = header.flatMap((value, index) => {
+    const normalized = normalizeHeader(value);
+    const match = normalized.match(/^scope(?:ofsteelwork|ofwork)?lot(\d+)$/);
+    return match && !normalized.includes('painting') ? [{ lot:`LOT${match[1]}`, column:index + 1 }] : [];
+  });
   for (const [column, field] of Object.entries(MATERIAL_FIELDS)) {
     const headerValue = header[Number(column) - 1];
     if (!Object.values(columns).includes(field) && !columns[column] && !normalizeHeader(headerValue)) columns[column] = field;
@@ -381,7 +494,25 @@ function materialColumns(header) {
     return normalized.startsWith('dateissue') || normalized.startsWith('issuedate') || normalized.startsWith('dateissued')
       ? [index + 1] : [];
   });
-  return { columns, scopeColumns, deliveryDate, receiptDates };
+  return { columns, scopeColumns, lotScopeColumns, deliveryDate, receiptDates };
+}
+
+function explicitLotCode(value) {
+  const match = String(value ?? '').trim().match(/^LOT\s*[-_ ]?\s*(\d+)$/i);
+  return match ? `LOT${match[1]}` : '';
+}
+
+function assignedLot(value) {
+  if (value === null || value === undefined || value === '') return false;
+  if (typeof value === 'number') return value > 0;
+  return !['-', '—', '–', 'N/A', 'NA', '0'].includes(String(value).trim().toLocaleUpperCase());
+}
+
+function sheetTitleLot(rows) {
+  const title = rows.slice(0, 8).flat().map((value) => String(value ?? ''))
+    .find((value) => /item\s*name|ten\s*hang\s*muc/i.test(value));
+  const match = String(title ?? '').match(/\bLOT\s*[-_ ]?\s*(\d+)\b/i);
+  return match ? `LOT${match[1]}` : '';
 }
 
 function btpColumns(header) {
@@ -603,6 +734,7 @@ function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
       continue;
     }
     if (name === 'cover' || name.includes('backup')) continue;
+    const titleLot = sheetTitleLot(rows);
     let headerIndex = -1;
     let symbolColumn = -1;
     for (let index = 0; index < Math.min(rows.length, 35); index += 1) {
@@ -628,7 +760,16 @@ function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
         fields[field] = normalizeImportNumber(fields[field]);
       }
       fields.part_no = normalizePartNumber(workbook.Sheets[sheetName], rowIndex, raw[4], xlsx);
+      fields.cutting_mark = normalizeValue(raw[5]);
       fields.scope = sourceColumns.scopeColumns.map((column) => normalizeValue(raw[column - 1])).find(Boolean) ?? fields.scope ?? null;
+      const lotCodes = new Set();
+      const explicitRowLot = explicitLotCode(fields.lot) || explicitLotCode(fields.note);
+      if (explicitRowLot) lotCodes.add(explicitRowLot);
+      for (const lotColumn of sourceColumns.lotScopeColumns) {
+        if (assignedLot(raw[lotColumn.column - 1])) lotCodes.add(lotColumn.lot);
+      }
+      if (!lotCodes.size && titleLot) lotCodes.add(titleLot);
+      fields.lot = [...lotCodes].join(',') || null;
       fields.delivery_date = sourceColumns.deliveryDate ? normalizeMaterialDate(raw[sourceColumns.deliveryDate - 1], xlsx) : null;
       const receiptDates = sortedIssueDates(raw, sourceColumns.receiptDates, xlsx);
       fields.delivery_date = receiptDates || (sourceColumns.deliveryDate
