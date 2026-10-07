@@ -156,7 +156,7 @@ function stageCompletionChart(rows, metric) {
   return `<div class="project-stage-report-list">${STAGES.map((stage, index) => {
     const actual = rows.reduce((sum, row) => sum + weight(row, stage), 0);
     const percent = Math.min(100, actual / totalPlanned * 100);
-    return `<div class="project-stage-report-row"><div><b>${esc(stage.label)}</b><span>${esc(fmt(actual, metric))} / ${esc(fmt(totalPlanned, metric))} ${metric === 'ton' ? 'tấn' : 'kg'}</span></div><div class="project-stage-report-track"><i class="series-${index}" style="width:${percent.toFixed(2)}%"></i></div><small>${fmt(percent, 'kg', 1)}%</small></div>`;
+    return `<div class="project-stage-report-row"><div class="project-stage-report-copy"><b>${esc(stage.label)}</b><span><strong>${esc(fmt(actual, metric))} ${metric === 'ton' ? 'tấn' : 'kg'}</strong> đã ghi nhận · ${esc(fmt(totalPlanned, metric))} ${metric === 'ton' ? 'tấn' : 'kg'} thiết kế</span></div><div class="project-stage-report-track"><i class="series-${index}" style="width:${percent.toFixed(2)}%"></i></div><small>${fmt(percent, 'kg', 1)}%</small></div>`;
   }).join('')}</div>`;
 }
 
@@ -178,7 +178,7 @@ function teamBacklogChart(rows, metric) {
   return `<div class="project-team-report">${ranked.map((team) => {
     const deliveredWidth = team.total ? team.delivered / maxValue * 100 : 0;
     const remainingWidth = team.total ? team.remaining / maxValue * 100 : 0;
-    return `<div class="project-team-report-row"><b title="${esc(team.label)}">${esc(team.label)}</b><div class="project-team-report-track"><i class="project-team-delivered" style="width:${deliveredWidth.toFixed(2)}%" title="Bàn giao ${esc(fmt(team.delivered, metric))}"></i><i class="project-team-remaining" style="width:${remainingWidth.toFixed(2)}%" title="Còn lại ${esc(fmt(team.remaining, metric))}"></i></div><span>${esc(fmt(team.delivered, metric))} / ${esc(fmt(team.total, metric))}</span></div>`;
+    return `<div class="project-team-report-row"><b title="${esc(team.label)}">${esc(team.label)}</b><div class="project-team-report-track"><i class="project-team-delivered" style="width:${deliveredWidth.toFixed(2)}%" title="Bàn giao ${esc(fmt(team.delivered, metric))}"></i><i class="project-team-remaining" style="width:${remainingWidth.toFixed(2)}%" title="Còn lại ${esc(fmt(team.remaining, metric))}"></i></div><div class="project-team-values"><span><small>Đã bàn giao</small><strong>${esc(fmt(team.delivered, metric))} ${metric === 'ton' ? 'tấn' : 'kg'}</strong></span><span><small>Còn lại</small><strong>${esc(fmt(team.remaining, metric))} ${metric === 'ton' ? 'tấn' : 'kg'}</strong></span><span><small>Tổng</small><strong>${esc(fmt(team.total, metric))} ${metric === 'ton' ? 'tấn' : 'kg'}</strong></span></div></div>`;
   }).join('')}</div><div class="project-team-legend"><span><i class="project-team-delivered"></i>Đã bàn giao</span><span><i class="project-team-remaining"></i>Còn lại</span></div>`;
 }
 
@@ -193,7 +193,7 @@ function receiverChart(rows, range, metric) {
   const ranked = [...receivers].sort((left, right) => right[1] - left[1]).slice(0, 10);
   if (!ranked.length) return '<div class="project-chart-empty">Chưa có khối lượng bàn giao trong khoảng ngày.</div>';
   const maxValue = Math.max(1, ...ranked.map(([, value]) => value));
-  return `<div class="project-receiver-report">${ranked.map(([label, value]) => `<div class="project-receiver-row"><span title="${esc(label)}">${esc(label)}</span><div class="project-receiver-track"><i style="width:${(value / maxValue * 100).toFixed(2)}%"></i></div><b>${esc(fmt(value, metric))}</b></div>`).join('')}</div>`;
+  return `<div class="project-receiver-report">${ranked.map(([label, value]) => `<div class="project-receiver-row"><span title="${esc(label)}">${esc(label)}</span><div class="project-receiver-track"><i style="width:${(value / maxValue * 100).toFixed(2)}%"></i></div><b>${esc(fmt(value, metric))} ${metric === 'ton' ? 'tấn' : 'kg'}</b></div>`).join('')}</div>`;
 }
 
 function btpProjectChart(summaries, projectNames, metric) {
