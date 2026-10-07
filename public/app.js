@@ -17,6 +17,18 @@ const state = { user: null, projects: [], plFiles: [], currentProject: '', loade
 const labels = {
   project_code: 'Dự án', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
+document.addEventListener('pointerdown', (event) => {
+  document.querySelectorAll('details.sheet-multi-select[open]').forEach((dropdown) => {
+    if (!dropdown.contains(event.target)) dropdown.open = false;
+  });
+}, true);
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  const dropdown = [...document.querySelectorAll('details.sheet-multi-select[open]')].at(-1);
+  if (!dropdown) return;
+  dropdown.open = false;
+  dropdown.querySelector('summary')?.focus();
+});
 function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]); }
 function fmt(value) {
   if (value === null || value === undefined || value === '') return '—';
@@ -630,6 +642,43 @@ function bindPlFileDeleteButtons() {
   }));
 }
 function bindPage() {
+  const pageRoot = document.querySelector('#page');
+  if (pageRoot && !pageRoot.dataset.chartTooltipDismissBound) {
+    pageRoot.dataset.chartTooltipDismissBound = 'true';
+    pageRoot.addEventListener('pointerdown', (event) => {
+      if (event.target.closest('.chart-unit-hit')) return;
+      pageRoot.querySelectorAll('.material-chart-tooltip').forEach((tooltip) => { tooltip.hidden = true; });
+    });
+  }
+  document.querySelectorAll('.chart-unit-hit').forEach((target) => {
+    const figure = target.closest('.material-chart-card');
+    const tooltip = figure?.querySelector('.material-chart-tooltip');
+    if (!figure || !tooltip) return;
+    const showTooltip = (clientX, clientY) => {
+      tooltip.textContent = `${target.dataset.unitLabel || 'Đơn vị giao'}\nĐã nhận: ${target.dataset.received || '0'} ${target.dataset.unit || ''}\nCòn thiếu: ${target.dataset.shortage || '0'} ${target.dataset.unit || ''}`;
+      tooltip.hidden = false;
+      target.setAttribute('aria-describedby', 'materialChartTooltip');
+      const figureRect = figure.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const anchorX = Number.isFinite(clientX) ? clientX - figureRect.left : targetRect.left + targetRect.width / 2 - figureRect.left;
+      const anchorY = Number.isFinite(clientY) ? clientY - figureRect.top : targetRect.top - figureRect.top;
+      const x = Math.max(8, Math.min(figureRect.width - tooltip.offsetWidth - 8, anchorX + 12));
+      const y = Math.max(38, Math.min(figureRect.height - tooltip.offsetHeight - 8, anchorY - tooltip.offsetHeight - 10));
+      tooltip.style.left = `${x}px`;
+      tooltip.style.top = `${y}px`;
+    };
+    target.addEventListener('pointerenter', (event) => showTooltip(event.clientX, event.clientY));
+    target.addEventListener('pointermove', (event) => {
+      if (event.pointerType === 'mouse' && !tooltip.hidden) showTooltip(event.clientX, event.clientY);
+    });
+    target.addEventListener('pointerdown', (event) => showTooltip(event.clientX, event.clientY));
+    target.addEventListener('pointerleave', (event) => { if (event.pointerType !== 'touch') tooltip.hidden = true; });
+    target.addEventListener('focus', () => showTooltip(NaN, NaN));
+    target.addEventListener('blur', () => { tooltip.hidden = true; });
+    target.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { tooltip.hidden = true; target.blur(); }
+    });
+  });
   const importCategory = document.querySelector('#importForm select[name="category"]');
   const importFile = document.querySelector('#importForm input[name="file"]');
   const importFileHint = document.querySelector('#importFileHint');

@@ -142,9 +142,14 @@ function unitColumnChart(units, metric) {
     const receivedHeight = unit.received / maxValue * plotHeight;
     const shortageHeight = unit.shortage / maxValue * plotHeight;
     const shortLabel = unit.label.length > 12 ? `${unit.label.slice(0, 11)}…` : unit.label;
-    return `<g><rect x="${center - barWidth - 2}" y="${top + plotHeight - receivedHeight}" width="${barWidth}" height="${receivedHeight}" rx="3" tabindex="0" class="chart-bar-received"><title>${escapeHtml(unit.label)} · đã nhận ${escapeHtml(formatNumber(unit.received, metric))} ${spec.unit}</title></rect><rect x="${center + 2}" y="${top + plotHeight - shortageHeight}" width="${barWidth}" height="${shortageHeight}" rx="3" tabindex="0" class="chart-bar-shortage"><title>${escapeHtml(unit.label)} · còn thiếu hiện tại ${escapeHtml(formatNumber(unit.shortage, metric))} ${spec.unit}</title></rect><text x="${center}" y="${height - 25}" text-anchor="middle" class="chart-axis-label"><title>${escapeHtml(unit.label)}</title>${escapeHtml(shortLabel)}</text></g>`;
+    const label = escapeHtml(unit.label);
+    const received = escapeHtml(formatNumber(unit.received, metric));
+    const shortage = escapeHtml(formatNumber(unit.shortage, metric));
+    const unitName = escapeHtml(spec.unit);
+    const ariaLabel = `${label} · đã nhận ${received} ${unitName} · còn thiếu ${shortage} ${unitName}`;
+    return `<g><rect x="${center - groupWidth / 2 + 2}" y="${top}" width="${Math.max(12, groupWidth - 4)}" height="${plotHeight}" class="chart-unit-hit" tabindex="0" role="graphics-symbol" aria-label="${ariaLabel}" data-unit-label="${label}" data-received="${received}" data-shortage="${shortage}" data-unit="${unitName}"/><rect x="${center - barWidth - 2}" y="${top + plotHeight - receivedHeight}" width="${barWidth}" height="${receivedHeight}" rx="3" class="chart-bar-received" aria-hidden="true"/><rect x="${center + 2}" y="${top + plotHeight - shortageHeight}" width="${barWidth}" height="${shortageHeight}" rx="3" class="chart-bar-shortage" aria-hidden="true"/><text x="${center}" y="${height - 25}" text-anchor="middle" class="chart-axis-label"><title>${label}</title>${escapeHtml(shortLabel)}</text></g>`;
   }).join('');
-  return `<div class="material-chart-scroll"><svg class="material-chart-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Biểu đồ cột đã nhận và còn thiếu theo đơn vị giao · ${spec.unit}"><title>Đã nhận và còn thiếu theo đơn vị giao · ${spec.unit}</title>${grid}${columns}<text x="${left}" y="13" class="chart-axis-caption">${spec.unit}</text></svg></div>`;
+  return `<div class="material-chart-scroll"><svg class="material-chart-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Biểu đồ cột đã nhận và còn thiếu theo đơn vị giao · ${spec.unit}"><title>Đã nhận và còn thiếu theo đơn vị giao · ${spec.unit}</title>${grid}${columns}<text x="${left}" y="13" class="chart-axis-caption">${spec.unit}</text></svg></div><div id="materialChartTooltip" class="material-chart-tooltip" role="status" aria-live="polite" hidden></div>`;
 }
 
 function currentReceived(row) {
