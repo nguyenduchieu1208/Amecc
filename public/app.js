@@ -574,17 +574,19 @@ function openProjectDetail(row) {
   else dialog.setAttribute('open', '');
 }
 function projectDashboardPage() {
-  const projects = projectsForData('progress');
+  const projects = projectsForData('all');
   const allCodes = projects.map((project) => project.code);
   const selectedCodes = state.projectDashboardSelectedProjects === null ? allCodes : state.projectDashboardSelectedProjects.filter((code) => allCodes.includes(code));
   const selectedSet = new Set(selectedCodes);
   const rows = (state.projectDashboardData?.rows || []).filter((row) => selectedSet.has(row.project_code));
+  const btpSummary = (state.projectDashboardData?.btpSummaries || []).filter((row) => selectedSet.has(row.project_code));
+  const projectNames = Object.fromEntries(projects.map((project) => [project.code, projectFilenameLabel(project)]));
   const allSelected = projects.length > 0 && selectedCodes.length === projects.length;
   const projectFilterMarkup = `<label class="filter-label project-dashboard-project-filter">Dự án<details class="sheet-multi-select project-multi-select" id="projectDashboardProjects"><summary>${allSelected ? `Tất cả dự án (${projects.length})` : `${selectedCodes.length}/${projects.length} dự án`}</summary><div class="sheet-multi-menu"><label class="sheet-check-option sheet-check-all"><input type="checkbox" data-dashboard-project-all ${allSelected ? 'checked' : ''}><span>Chọn tất cả</span><small>${projects.length} dự án</small></label>${projects.map((project) => `<label class="sheet-check-option"><input type="checkbox" data-dashboard-project value="${esc(project.code)}" ${selectedSet.has(project.code) ? 'checked' : ''}><span>${esc(projectFilenameLabel(project))}</span><small>${esc(project.code)}</small></label>`).join('') || '<p class="muted">Chưa có dữ liệu QLDA.</p>'}</div></details></label>`;
   const sourceRows = [...new Set(rows.map((row) => row.source_file).filter(Boolean))];
   const sourceLabel = allSelected ? `${projects.length} dự án` : `${selectedCodes.length} dự án đã chọn`;
   return `${heading('PROJECT REPORTING · QLDA','Dashboard báo cáo dự án','Theo dõi lũy kế, khối lượng theo công đoạn, tổ phụ trách và bàn giao trên một hoặc nhiều dự án.')}
-    ${renderProjectDashboard(rows, { from:state.projectDashboardStartDate, to:state.projectDashboardEndDate, metric:state.projectDashboardMetric, projectFilterMarkup, sourceLabel:sourceRows.length ? sourceRows.slice(0, 3).join(', ') : sourceLabel })}`;
+    ${renderProjectDashboard(rows, { from:state.projectDashboardStartDate, to:state.projectDashboardEndDate, metric:state.projectDashboardMetric, projectFilterMarkup, sourceLabel:sourceRows.length ? sourceRows.slice(0, 3).join(', ') : sourceLabel, btpSummary, projectNames })}`;
 }
 function projectsPage() {
   const rows = state.progressData?.rows || [];
@@ -940,7 +942,7 @@ function bindPage() {
     rerenderProjectDashboard({ keepDropdown:true });
   });
   document.querySelectorAll('[data-dashboard-project]').forEach((checkbox) => checkbox.addEventListener('change', () => {
-    const allCodes = projectsForData('progress').map((project) => project.code);
+    const allCodes = projectsForData('all').map((project) => project.code);
     const selected = new Set(state.projectDashboardSelectedProjects === null ? allCodes : state.projectDashboardSelectedProjects);
     if (checkbox.checked) selected.add(checkbox.value);
     else selected.delete(checkbox.value);
@@ -1485,24 +1487,34 @@ async function loadProjectDataField(projectCode, field, endpoint) {
   }
 }
 async function loadProjectDashboardData() {
-  const projectCodes = projectsForData('progress').map((project) => project.code);
-  const key = projectCodes.join('|');
-  if (!projectCodes.length) {
-    state.projectDashboardData = { rows:[] };
+  const projects = projectsForData('all');
+  const progressCodes = projects.filter((project) => Number(project.progress_rows || 0) > 0).map((project) => project.code);
+  const btpCodes = projects.filter((project) => Number(project.btp_rows || 0) > 0).map((project) => project.code);
+  const key = `${progressCodes.join('|')}::${btpCodes.join('|')}`;
+  if (!progressCodes.length && !btpCodes.length) {
+    state.projectDashboardData = { rows:[], btpSummaries:[] };
     state.projectDashboardDataKey = key;
     return;
   }
   if (state.projectDashboardData && state.projectDashboardDataKey === key) return;
   let request = projectDashboardRequests.get(key);
   if (!request) {
-    const query = new URLSearchParams();
-    projectCodes.forEach((code) => query.append('project', code));
-    request = api(`/api/projects/progress?${query.toString()}`)
+    const progressQuery = new URLSearchParams();
+    progressCodes.forEach((code) => progressQuery.append('project', code));
+    const btpQuery = new URLSearchParams();
+    btpCodes.forEach((code) => btpQuery.append('project', code));
+    const progressRequest = progressCodes.length ? api(`/api/projects/progress?${progressQuery.toString()}`) : Promise.resolve({ rows:[] });
+    const btpRequest = btpCodes.length ? api(`/api/projects/btp-summary?${btpQuery.toString()}`) : Promise.resolve({ summaries:[] });
+    request = Promise.all([progressRequest, btpRequest])
+      .then(([progressResult, btpResult]) => ({ rows:progressResult.rows || [], btpSummaries:btpResult.summaries || [] }))
       .finally(() => projectDashboardRequests.delete(key));
     projectDashboardRequests.set(key, request);
   }
   const result = await request;
-  if (projectsForData('progress').map((project) => project.code).join('|') === key) {
+  const currentProjects = projectsForData('all');
+  const currentProgressCodes = currentProjects.filter((project) => Number(project.progress_rows || 0) > 0).map((project) => project.code);
+  const currentBtpCodes = currentProjects.filter((project) => Number(project.btp_rows || 0) > 0).map((project) => project.code);
+  if (`${currentProgressCodes.join('|')}::${currentBtpCodes.join('|')}` === key) {
     state.projectDashboardData = result;
     state.projectDashboardDataKey = key;
   }

@@ -4,7 +4,8 @@ const AMECC_SYNC = Object.freeze({
   parserUrl: 'https://nguyenduchieu1208.github.io/Amecc/drive-sync-parser.js',
   xlsxUrl: 'https://nguyenduchieu1208.github.io/Amecc/vendor/xlsx.full.min.js',
   maxFileBytes: 20 * 1024 * 1024,
-  maxRequestBytes: 512 * 1024,
+  // Keep uploads below the API's 1 MiB hard cap while reducing sequential chunks.
+  maxRequestBytes: 900 * 1024,
   runBudgetMs: 5 * 60 * 1000,
 });
 

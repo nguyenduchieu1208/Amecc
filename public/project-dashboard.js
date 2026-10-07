@@ -196,6 +196,35 @@ function receiverChart(rows, range, metric) {
   return `<div class="project-receiver-report">${ranked.map(([label, value]) => `<div class="project-receiver-row"><span title="${esc(label)}">${esc(label)}</span><div class="project-receiver-track"><i style="width:${(value / maxValue * 100).toFixed(2)}%"></i></div><b>${esc(fmt(value, metric))}</b></div>`).join('')}</div>`;
 }
 
+function btpProjectChart(summaries, projectNames, metric) {
+  const rows = (Array.isArray(summaries) ? summaries : []).map((row) => ({
+    ...row,
+    designWeight:number(row.design_weight) || 0,
+    receivedWeight:number(row.received_weight) || 0,
+    remainingWeight:number(row.remaining_weight) || 0,
+    designQuantity:number(row.design_quantity) || 0,
+    receivedQuantity:number(row.received_quantity) || 0,
+    remainingQuantity:number(row.remaining_quantity) || 0,
+  }));
+  if (!rows.length) return '<div class="project-chart-empty">Chưa có dữ liệu BTP ở các dự án đang chọn.</div>';
+  const hasWeight = rows.some((row) => row.designWeight > 0 || row.receivedWeight > 0 || row.remainingWeight > 0);
+  const unitMetric = hasWeight ? metric : 'quantity';
+  const unitLabel = hasWeight ? (metric === 'ton' ? 'tấn' : 'kg') : 'pcs';
+  const ranked = rows.map((row) => {
+    const received = hasWeight ? row.receivedWeight : row.receivedQuantity;
+    const remaining = hasWeight ? row.remainingWeight : row.remainingQuantity;
+    const design = Math.max(hasWeight ? row.designWeight : row.designQuantity, received + remaining);
+    return { code:row.project_code, label:projectNames?.[row.project_code] || row.project_code, count:number(row.btp_rows) || 0, received, remaining, design };
+  }).sort((left, right) => right.design - left.design || left.label.localeCompare(right.label, 'vi', { numeric:true, sensitivity:'base' }));
+  const maxValue = Math.max(1, ...ranked.map((row) => row.design));
+  return `<div class="project-btp-legend"><span><i class="project-btp-received"></i>Đã nhận</span><span><i class="project-btp-remaining"></i>Còn thiếu</span><small>${hasWeight ? 'Khối lượng' : 'Số lượng BTP'}</small></div><div class="project-btp-report">${ranked.map((row) => {
+    const percent = row.design ? Math.min(100, row.received / row.design * 100) : 0;
+    const receivedWidth = Math.min(100, row.received / maxValue * 100);
+    const remainingWidth = Math.min(100 - receivedWidth, row.remaining / maxValue * 100);
+    return `<div class="project-btp-report-row"><div class="project-btp-copy"><b title="${esc(row.label)}">${esc(row.label)}</b><small>${esc(row.code)} · ${fmt(row.count)} mã BTP</small></div><div class="project-btp-track" role="img" aria-label="${esc(row.label)}: đã nhận ${esc(fmt(row.received, unitMetric))} ${unitLabel}, còn thiếu ${esc(fmt(row.remaining, unitMetric))} ${unitLabel}"><i class="project-btp-received" style="width:${receivedWidth.toFixed(2)}%"></i><i class="project-btp-remaining" style="width:${remainingWidth.toFixed(2)}%"></i></div><span class="project-btp-value">${esc(fmt(row.received, unitMetric))} / ${esc(fmt(row.design, unitMetric))} ${unitLabel}<small>${fmt(percent, 'kg')}% nhận</small></span></div>`;
+  }).join('')}</div>`;
+}
+
 function chartCaption(title, description) {
   return `<figcaption><div class="project-report-caption"><div><strong>${title}</strong><span>${description}</span></div><button class="project-chart-expand" data-expand-chart type="button" aria-label="Phóng to biểu đồ" aria-pressed="false" title="Phóng to biểu đồ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/></svg><span>Toàn màn hình</span></button></div></figcaption>`;
 }
@@ -220,7 +249,7 @@ export function renderProjectDashboard(rows, options = {}) {
     <p id="projectDashboardNotice" class="project-chart-notice" aria-live="polite"></p>
     <div class="stats-grid compact project-report-stats"><article class="stat-card"><div class="stat-top"><span>Tổng KL thiết kế</span><span class="stat-symbol">●</span></div><strong>${fmt(total, metric)}</strong><small>${metric === 'ton' ? 'tấn' : 'kg'} · toàn dự án</small></article><article class="stat-card green"><div class="stat-top"><span>Đã bàn giao</span><span class="stat-symbol">●</span></div><strong>${fmt(delivered, metric)}</strong><small>${fmt(percent, 'kg')}% khối lượng thiết kế</small></article><article class="stat-card gold"><div class="stat-top"><span>Khối lượng còn lại</span><span class="stat-symbol">●</span></div><strong>${fmt(remaining, metric)}</strong><small>${metric === 'ton' ? 'tấn' : 'kg'} · theo SL bàn giao</small></article><article class="stat-card blue"><div class="stat-top"><span>Cấu kiện có hoạt động</span><span class="stat-symbol">●</span></div><strong>${fmt(filteredRows.length)}</strong><small>${range.from || range.to ? 'Có ghi nhận trong khoảng ngày' : `Trên tổng ${fmt(sourceRows.length)} cấu kiện`}</small></article></div>
     ${emptyRange ? '<div class="notice error">Khoảng ngày không hợp lệ: ngày bắt đầu phải trước hoặc bằng ngày kết thúc.</div>' : ''}
-    <div class="project-report-grid"><figure class="project-report-card project-report-cumulative">${chartCaption('Lũy kế khối lượng theo ngày và công đoạn', `${range.from || range.to ? `${range.from || 'Đầu kỳ'} – ${range.to || 'Hiện tại'}` : 'Toàn bộ ngày ghi nhận'} · rê hoặc tab vào điểm để xem số liệu`)}${emptyRange ? '' : cumulativeChart(sourceRows, range, metric)}</figure><figure class="project-report-card">${chartCaption('Tiến độ khối lượng 5 công đoạn', 'Khối lượng đã ghi nhận so với tổng thiết kế')}${stageCompletionChart(sourceRows, metric)}</figure><figure class="project-report-card">${chartCaption('Bàn giao và khối lượng còn lại theo tổ', 'Tổng hợp hiện tại · không phụ thuộc khoảng ngày')}${teamBacklogChart(sourceRows, metric)}</figure><figure class="project-report-card">${chartCaption('Khối lượng bàn giao theo đơn vị nhận', `${range.from || range.to ? `${range.from || 'Đầu kỳ'} – ${range.to || 'Hiện tại'}` : 'Toàn bộ ngày ghi nhận'} · tối đa 10 đơn vị`)}${emptyRange ? '' : receiverChart(sourceRows, range, metric)}</figure></div>
+    <div class="project-report-grid"><figure class="project-report-card project-report-cumulative">${chartCaption('Lũy kế khối lượng theo ngày và công đoạn', `${range.from || range.to ? `${range.from || 'Đầu kỳ'} – ${range.to || 'Hiện tại'}` : 'Toàn bộ ngày ghi nhận'} · rê hoặc tab vào điểm để xem số liệu`)}${emptyRange ? '' : cumulativeChart(sourceRows, range, metric)}</figure><figure class="project-report-card">${chartCaption('Tiến độ khối lượng 5 công đoạn', 'Khối lượng đã ghi nhận so với tổng thiết kế')}${stageCompletionChart(sourceRows, metric)}</figure><figure class="project-report-card">${chartCaption('Bàn giao và khối lượng còn lại theo tổ', 'Tổng hợp hiện tại · không phụ thuộc khoảng ngày')}${teamBacklogChart(sourceRows, metric)}</figure><figure class="project-report-card">${chartCaption('Khối lượng bàn giao theo đơn vị nhận', `${range.from || range.to ? `${range.from || 'Đầu kỳ'} – ${range.to || 'Hiện tại'}` : 'Toàn bộ ngày ghi nhận'} · tối đa 10 đơn vị`)}${emptyRange ? '' : receiverChart(sourceRows, range, metric)}</figure><figure class="project-report-card project-report-btp">${chartCaption('Bán thành phẩm theo dự án', 'So sánh khối lượng BTP đã nhận và còn thiếu ở các dự án đang chọn')}${btpProjectChart(options.btpSummary, options.projectNames, metric)}</figure></div>
     <p class="project-report-note"><b>Đường lũy kế hiện là khối lượng thực tế được ghi trong QLDA.</b> File đang có ngày hoàn thành và khối lượng thực tế theo công đoạn nhưng chưa có ngày mục tiêu hoặc đường kế hoạch chuẩn; vì vậy chưa thể tính đường S kế hoạch, chậm tiến độ hoặc dự báo ngày hoàn thành một cách đáng tin cậy.</p>
   </section>`;
 }

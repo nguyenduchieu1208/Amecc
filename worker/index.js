@@ -12,8 +12,10 @@ const BTP_COLUMNS = [
   'size', 'length_mm', 'unit_weight', 'total_weight', 'design_quantity', 'received', 'remaining', 'daily_progress', 'joint_check', 'status', 'note',
 ];
 const BTP_IMPORT_COLUMNS = BTP_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
-const MATERIAL_CHUNK_SIZE = 500;
-const BTP_CHUNK_SIZE = 500;
+// Larger staged batches reduce sequential Apps Script round trips. The caller
+// still caps each JSON request below the API's 1 MiB limit.
+const MATERIAL_CHUNK_SIZE = 1500;
+const BTP_CHUNK_SIZE = 1500;
 const MATERIAL_INSERT_ROWS_PER_STATEMENT = Math.floor(96 / (MATERIAL_IMPORT_COLUMNS.length + 2));
 const MATERIAL_COMMIT_BATCH_SIZE = 500;
 const BTP_COMMIT_BATCH_SIZE = 500;
@@ -41,7 +43,10 @@ const QLDA_FIELDS = {
   51: 'handover_weight', 52: 'receiver', 53: 'record_no',
 };
 const PROJECT_IMPORT_COLUMNS = PROGRESS_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
-const PROJECT_IMPORT_CHUNK_SIZE = 100;
+// QLDA rows are substantially wider than material rows. Keep chunks large
+// enough to avoid hundreds of sequential requests while the Apps Script sync
+// runs under its per-execution time limit; the caller still caps JSON payloads.
+const PROJECT_IMPORT_CHUNK_SIZE = 1000;
 const MATERIAL_FIELDS = {
   2: 'drawing', 3: 'assembly', 4: 'description', 5: 'part_no', 7: 'size', 12: 'quantity',
   14: 'weight', 15: 'scope', 20: 'received', 21: 'remaining',
@@ -882,6 +887,35 @@ async function route(request, env) {
     const columns = PROGRESS_COLUMNS.join(', ');
     const { results } = await env.DB.prepare(`SELECT ${columns} FROM project_progress WHERE project_code IN (${placeholders}) ORDER BY project_code, source_file, source_row`).bind(...requestedCodes).all();
     return json({ project_codes: requestedCodes, rows: results });
+  }
+  if (request.method === 'GET' && path === '/api/projects/btp-summary') {
+    const requestedCodes = [...new Set(new URL(request.url).searchParams.getAll('project').map((code) => safeProjectCode(code)))];
+    if (!requestedCodes.length) throw new HttpError(400, 'Hãy chọn ít nhất một dự án để xem báo cáo BTP.');
+    if (requestedCodes.length > 200) throw new HttpError(400, 'Có thể xem tối đa 200 dự án cùng lúc.');
+    const placeholders = requestedCodes.map(() => '?').join(', ');
+    const { results } = await env.DB.prepare(`
+      SELECT project_code,
+        COUNT(*) AS btp_rows,
+        SUM(CASE WHEN design_quantity > 0 THEN design_quantity ELSE 0 END) AS design_quantity,
+        SUM(CASE WHEN received > 0 THEN received ELSE 0 END) AS received_quantity,
+        SUM(CASE WHEN remaining IS NOT NULL THEN CASE WHEN remaining > 0 THEN remaining ELSE 0 END
+          WHEN design_quantity > COALESCE(received, 0) THEN design_quantity - COALESCE(received, 0) ELSE 0 END) AS remaining_quantity,
+        SUM(CASE WHEN total_weight > 0 THEN total_weight
+          WHEN unit_weight > 0 AND design_quantity > 0 THEN unit_weight * design_quantity
+          ELSE 0 END) AS design_weight,
+        SUM(CASE WHEN unit_weight > 0 AND received > 0 THEN unit_weight * received
+          WHEN total_weight > 0 AND design_quantity > 0 AND received > 0 THEN total_weight * received / design_quantity
+          ELSE 0 END) AS received_weight,
+        SUM(CASE WHEN unit_weight > 0 AND remaining IS NOT NULL THEN unit_weight * CASE WHEN remaining > 0 THEN remaining ELSE 0 END
+          WHEN unit_weight > 0 AND design_quantity > COALESCE(received, 0) THEN unit_weight * (design_quantity - COALESCE(received, 0))
+          WHEN total_weight > 0 AND design_quantity > 0 AND remaining IS NOT NULL THEN total_weight * CASE WHEN remaining > 0 THEN remaining ELSE 0 END / design_quantity
+          WHEN total_weight > 0 AND design_quantity > COALESCE(received, 0) THEN total_weight * (design_quantity - COALESCE(received, 0)) / design_quantity
+          ELSE 0 END) AS remaining_weight
+      FROM btp_materials
+      WHERE project_code IN (${placeholders})
+      GROUP BY project_code
+      ORDER BY project_code`).bind(...requestedCodes).all();
+    return json({ project_codes: requestedCodes, summaries: results });
   }
   const progressMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/progress$/);
   if (request.method === 'GET' && progressMatch) {
