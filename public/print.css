@@ -1,0 +1,220 @@
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  html,
+  body {
+    width: auto !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #17263b !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  body.btp-printing > #app {
+    display: none !important;
+  }
+
+  body.btp-printing > #btpPrintDocument {
+    display: block !important;
+    width: 100% !important;
+    color: #17263b !important;
+    font-family: Arial, "Segoe UI", sans-serif !important;
+  }
+
+  .btp-print-section {
+    display: block;
+    width: 100%;
+    break-inside: auto;
+  }
+
+  .btp-print-page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .btp-print-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 0 12px;
+    padding: 0 0 9px;
+    border-bottom: 2px solid #1555a3;
+  }
+
+  .btp-print-brand {
+    color: #1555a3;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+  }
+
+  .btp-print-header h1 {
+    margin: 4px 0 2px;
+    color: #122c4b;
+    font-size: 17pt;
+    line-height: 1.2;
+  }
+
+  .btp-print-header p {
+    margin: 0;
+    color: #65758a;
+    font-size: 8pt;
+  }
+
+  .btp-print-date {
+    display: grid;
+    gap: 3px;
+    justify-items: end;
+    padding-top: 5px;
+    color: #66758a;
+    font-size: 8pt;
+  }
+
+  .btp-print-date strong {
+    color: #17263b;
+    font-size: 9pt;
+  }
+
+  .btp-print-project {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px 12px;
+    margin-bottom: 9px;
+    padding: 9px 11px;
+    border: 1px solid #dbe4ef;
+    border-radius: 5px;
+    background: #f5f8fc !important;
+  }
+
+  .btp-print-project > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .btp-print-project span,
+  .btp-print-totals small {
+    color: #718096;
+    font-size: 7pt;
+    font-weight: 600;
+  }
+
+  .btp-print-project strong {
+    overflow-wrap: anywhere;
+    color: #1d3452;
+    font-size: 8pt;
+  }
+
+  .btp-print-totals {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0 0 10px;
+  }
+
+  .btp-print-totals > span {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 9px;
+    border: 1px solid #e2e9f1;
+    border-radius: 4px;
+    background: #fff !important;
+  }
+
+  .btp-print-totals strong {
+    color: #1555a3;
+    font-size: 9pt;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .btp-print-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    color: #17263b;
+    font-size: 7pt;
+  }
+
+  .btp-print-table thead {
+    display: table-header-group;
+  }
+
+  .btp-print-table th {
+    padding: 6px 5px;
+    border: 1px solid #cbd8e6;
+    background: #eaf1f8 !important;
+    color: #274363;
+    font-size: 6.5pt;
+    font-weight: 700;
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  .btp-print-table td {
+    padding: 5px;
+    border: 1px solid #dce4ed;
+    background: #fff !important;
+    font-size: 7pt;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+    vertical-align: top;
+  }
+
+  .btp-print-table tbody tr:nth-child(even) td {
+    background: #f8fafc !important;
+  }
+
+  .btp-print-table tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .btp-print-status {
+    display: inline-block;
+    padding: 2px 5px;
+    border-radius: 8px;
+    font-size: 6.5pt;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .btp-print-status.success {
+    background: #e0f5eb !important;
+    color: #08744f;
+  }
+
+  .btp-print-status.warning {
+    background: #fff2d5 !important;
+    color: #8e6106;
+  }
+
+  .btp-print-status.danger {
+    background: #ffe6e7 !important;
+    color: #aa303a;
+  }
+
+  .btp-print-status.neutral {
+    background: #edf1f5 !important;
+    color: #58677b;
+  }
+
+  .btp-print-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+    padding-top: 5px;
+    border-top: 1px solid #dce4ed;
+    color: #728198;
+    font-size: 7pt;
+  }
+}

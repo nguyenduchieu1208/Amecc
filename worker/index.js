@@ -304,6 +304,33 @@ async function requireDriveSync(request, env) {
   }
 }
 
+async function authorizeManualDataRefresh(request, env) {
+  const refreshPassword = String(env.AMECC_REFRESH_PASSWORD || '');
+  if (refreshPassword.length < 8) throw new HttpError(503, 'Chưa cấu hình mật khẩu làm mới dữ liệu trên máy chủ.');
+  const body = await request.json().catch(() => null);
+  const providedPassword = String(body?.password || '');
+  if (!constantTimeEqual(providedPassword, refreshPassword)) throw new HttpError(401, 'Mật khẩu làm mới không đúng.');
+
+  const configuredCooldown = Number(env.MANUAL_REFRESH_COOLDOWN_SECONDS);
+  const cooldownSeconds = Number.isFinite(configuredCooldown)
+    ? Math.min(3600, Math.max(10, Math.floor(configuredCooldown)))
+    : 60;
+  const now = Math.floor(Date.now() / 1000);
+  const allowed = await env.DB.prepare(`
+    INSERT INTO manual_refresh_state (id, last_refresh_at) VALUES ('workspace', ?)
+    ON CONFLICT(id) DO UPDATE SET last_refresh_at = excluded.last_refresh_at
+      WHERE manual_refresh_state.last_refresh_at <= ?
+    RETURNING last_refresh_at
+  `).bind(now, now - cooldownSeconds).first();
+
+  if (!allowed) {
+    const previous = await env.DB.prepare('SELECT last_refresh_at FROM manual_refresh_state WHERE id = ?').bind('workspace').first();
+    const retryAfter = Math.max(1, Number(previous?.last_refresh_at || now) + cooldownSeconds - now);
+    throw new HttpError(429, `Vui lòng đợi ${retryAfter} giây rồi làm mới lại.`);
+  }
+  return json({ ok:true, cooldown_seconds:cooldownSeconds, available_at:now + cooldownSeconds });
+}
+
 async function login(request, env) {
   const body = await request.json().catch(() => null);
   const username = String(body?.username || '').trim().toLowerCase();
@@ -847,6 +874,7 @@ async function route(request, env) {
   if (request.method === 'POST' && path === '/api/auth/setup') return setupFirstAdmin(request, env);
   if (request.method === 'POST' && path === '/api/auth/login') return login(request, env);
   if (request.method === 'POST' && path === '/api/auth/logout') return logout(request, env);
+  if (request.method === 'POST' && path === '/api/data/refresh') return authorizeManualDataRefresh(request, env);
   if (request.method === 'GET' && path === '/api/auth/me') {
     const user = await currentUser(request, env);
     return json({ user: user ? { id: user.id, username: user.username, role: user.role } : null });

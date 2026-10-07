@@ -35,6 +35,8 @@ Deno.serve(async (request) => {
       ALLOWED_ORIGIN: 'https://nguyenduchieu1208.github.io',
       ADMIN_SETUP_KEY: Deno.env.get('ADMIN_SETUP_KEY') || '',
       DRIVE_SYNC_TOKEN: Deno.env.get('DRIVE_SYNC_TOKEN') || '',
+      AMECC_REFRESH_PASSWORD: Deno.env.get('AMECC_REFRESH_PASSWORD') || '',
+      MANUAL_REFRESH_COOLDOWN_SECONDS: Deno.env.get('MANUAL_REFRESH_COOLDOWN_SECONDS') || '60',
       SESSION_TTL_SECONDS: '28800',
       MAX_UPLOAD_BYTES: '20971520',
     };

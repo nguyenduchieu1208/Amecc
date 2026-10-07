@@ -24,6 +24,14 @@
 
    Đặt `ADMIN_SETUP_KEY` bằng một chuỗi ngẫu nhiên mạnh trong Supabase Function Secrets, không commit giá trị này. `public/config.js` chứa URL project và publishable key; publishable key được thiết kế để công khai.
 
+   Nút **Làm mới** ở góc giao diện yêu cầu mật khẩu riêng phía máy chủ. Cấu hình hoặc đổi mật khẩu bằng Supabase Function Secret (không đặt trong `public/config.js`):
+
+   ```powershell
+   npx supabase secrets set AMECC_REFRESH_PASSWORD="<MAT_KHAU_MOI>" MANUAL_REFRESH_COOLDOWN_SECONDS="60"
+   ```
+
+   Mật khẩu phải có ít nhất 8 ký tự. Thời gian chống spam áp dụng chung cho mọi người dùng; mặc định 60 giây, có thể đặt từ 10 đến 3.600 giây. Nút này tải lại dữ liệu mới nhất đang có trên API; việc đồng bộ workbook từ Drive vẫn do Apps Script chạy theo lịch riêng.
+
 5. Tạo project GitHub Pages tên `Amecc` cho tài khoản `nguyenduchieu1208`, sau đó bật Pages với source **GitHub Actions**. Workflow trong `.github/workflows/pages.yml` deploy nội dung `public/`.
 6. Mở `https://nguyenduchieu1208.github.io/Amecc/` để xem dữ liệu dự án công khai; trang này không yêu cầu đăng nhập. Trang quản trị riêng tại `https://nguyenduchieu1208.github.io/Amecc/admin.html` yêu cầu tài khoản admin để đăng nhập, nhập workbook và xóa file. Edge Function chỉ cho phép đúng **origin** URL Pages (origin chỉ gồm scheme + host, không path). `public/config.js` là cấu hình public, không chứa secret.
 7. Nếu database chưa có admin sau khi khôi phục, khởi tạo admin đúng một lần bằng request HTTPS:

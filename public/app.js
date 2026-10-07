@@ -13,7 +13,7 @@ const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', materialLotFilter: '', projectSearch: '', projectMobileFiltersOpen: false, projectStatusFilter: '', projectShipmentFilter: '', projectItemFilter: '', projectTeamFilter: '', projectPageIndex: 0, projectDashboardData: null, projectDashboardDataKey: '', projectDashboardSelectedProjects: null, projectDashboardFiltersOpen: false, projectDashboardStartDate: '', projectDashboardEndDate: '', projectDashboardMetric: 'kg', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', materialLotFilter: '', projectSearch: '', projectMobileFiltersOpen: false, projectStatusFilter: '', projectShipmentFilter: '', projectItemFilter: '', projectTeamFilter: '', projectPageIndex: 0, projectDashboardData: null, projectDashboardDataKey: '', projectDashboardSelectedProjects: null, projectDashboardFiltersOpen: false, projectDashboardStartDate: '', projectDashboardEndDate: '', projectDashboardMetric: 'kg', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialPrintSelectedGroups: new Map(), materialPrintAvailableGroups: new Map(), materialExpandedGroups: new Set(), materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', shipment: 'Shipment', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -76,7 +76,7 @@ function icon(name) {
     admin:'<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
     collapse:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m5-11 3 3-3 3"/>',
     settings:'<circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.8 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.8-1l-1.7.7-1.4-2.4L7.1 15a8 8 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.8-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.8 1l1.7-.7 1.4 2.4-1.4 1.1a8 8 0 0 1-.1 2Z"/>',
-    chevron:'<path d="m9 18 6-6-6-6"/>', menu:'<path d="M4 6h16M4 12h16M4 18h16"/>', logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>', search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>', upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>', download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+    chevron:'<path d="m9 18 6-6-6-6"/>', menu:'<path d="M4 6h16M4 12h16M4 18h16"/>', logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>', search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>', refresh:'<path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 1-2.3-5.7L20 9"/>', upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>', download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.overview}</svg>`;
 }
@@ -164,11 +164,55 @@ function shell() {
     <div class="mobile-scrim" id="scrim"></div>
     <main class="main-area">
       <header class="topbar"><button class="icon-button mobile-menu" id="mobileMenu" aria-label="Mở menu">${icon('menu')}</button><div><div class="top-eyebrow">AMECC <span>/</span> WORKSPACE</div><h1 id="pageTitle">${currentPageTitle()}</h1></div>
-        <div class="top-actions"></div>
+        <div class="top-actions"><button class="workspace-refresh-button" id="workspaceRefreshButton" type="button" aria-haspopup="dialog" aria-controls="workspaceRefreshDialog" title="Làm mới số liệu">${icon('refresh')}<span>Làm mới</span></button></div>
       </header><section id="page" class="page" aria-live="polite"></section>
     </main>
+    <dialog class="workspace-refresh-dialog" id="workspaceRefreshDialog" aria-labelledby="workspaceRefreshTitle"><form id="workspaceRefreshForm"><div class="workspace-refresh-dialog-head"><span class="workspace-refresh-icon">${icon('refresh')}</span><div><h2 id="workspaceRefreshTitle">Làm mới số liệu</h2><p>Tải lại dữ liệu mới nhất từ máy chủ AMECC.</p></div></div><label for="workspaceRefreshPassword">Mật khẩu làm mới<input id="workspaceRefreshPassword" name="password" type="password" autocomplete="current-password" required minlength="8"></label><p class="workspace-refresh-message" id="workspaceRefreshMessage" role="status" aria-live="polite"></p><div class="workspace-refresh-dialog-actions"><button class="button workspace-refresh-cancel" id="closeWorkspaceRefresh" type="button">Đóng</button><button class="button primary" id="submitWorkspaceRefresh" type="submit">${icon('refresh')}<span>Cập nhật số liệu</span></button></div></form></dialog>
   </div>`;
   document.querySelector('#themeSelect').addEventListener('change', (event) => applyTheme(event.currentTarget.value));
+  const refreshDialog = document.querySelector('#workspaceRefreshDialog');
+  const refreshForm = document.querySelector('#workspaceRefreshForm');
+  document.querySelector('#workspaceRefreshButton').addEventListener('click', () => {
+    document.querySelector('#workspaceRefreshMessage').textContent = '';
+    refreshDialog.showModal();
+    document.querySelector('#workspaceRefreshPassword').focus();
+  });
+  document.querySelector('#closeWorkspaceRefresh').addEventListener('click', () => refreshDialog.close());
+  refreshDialog.addEventListener('click', (event) => { if (event.target === refreshDialog) refreshDialog.close(); });
+  refreshForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const passwordInput = document.querySelector('#workspaceRefreshPassword');
+    const message = document.querySelector('#workspaceRefreshMessage');
+    const submit = document.querySelector('#submitWorkspaceRefresh');
+    submit.disabled = true;
+    message.textContent = 'Đang xác thực và tải dữ liệu mới…';
+    message.className = 'workspace-refresh-message';
+    try {
+      const result = await api('/api/data/refresh', {
+        method:'POST', headers:{ 'content-type':'application/json' },
+        body:JSON.stringify({ password:passwordInput.value }),
+      });
+      passwordInput.value = '';
+      projectDataRequests.clear();
+      projectDashboardRequests.clear();
+      state.projectDashboardData = null;
+      state.projectDashboardDataKey = '';
+      state.loadedProject = '';
+      state.data = null;
+      state.btpData = null;
+      state.progressData = null;
+      state.auditDataCache = null;
+      await refreshProjects();
+      await renderPage();
+      message.textContent = `Đã tải lại số liệu mới nhất. Có thể làm mới tiếp sau ${fmt(result.cooldown_seconds)} giây.`;
+      message.className = 'workspace-refresh-message success-message';
+    } catch (error) {
+      message.textContent = error.message || 'Không thể làm mới dữ liệu.';
+      message.className = 'workspace-refresh-message error-message';
+    } finally {
+      submit.disabled = false;
+    }
+  });
   document.querySelector('#sidebarCollapse').addEventListener('click', () => {
     if (window.matchMedia('(max-width: 820px)').matches) {
       document.querySelector('.shell').classList.remove('drawer-open');
@@ -363,9 +407,9 @@ function auditBomGroups(rows, contextRows = rows, query = '') {
     if (!contextByGroup.has(key)) contextByGroup.set(key, []);
     contextByGroup.get(key).push(row);
   }
-  return [...groups].map(([key, groupRows]) => ({ rows:groupRows, detailRows:query ? contextByGroup.get(key) || groupRows : groupRows, query }));
+  return [...groups].map(([key, groupRows]) => ({ key, rows:groupRows, detailRows:query ? contextByGroup.get(key) || groupRows : groupRows, query }));
 }
-function auditBomGroupMarkup({ rows, detailRows = rows, query = '' }) {
+function auditBomGroupMarkup({ key, rows, detailRows = rows, query = '' }) {
   const first = detailRows[0] || rows[0];
   const parent = first?.bomParent;
   const sheet = materialSheetName(first?.btp_source_sheet || parent?.source_sheet || first?.source_sheet);
@@ -383,10 +427,146 @@ function auditBomGroupMarkup({ rows, detailRows = rows, query = '' }) {
   const statusClass = status === 'Đã đủ' ? 'success' : status === 'Đang về' ? 'warning' : 'neutral';
   const searchMatches = query ? detailRows.filter((row) => auditDetailMatchesSearch(row, query)) : [];
   const searchPreview = searchMatches.length ? `<span class="bom-search-match-preview-wrap"><span class="bom-search-match-label">${fmt(searchMatches.length)} dòng khớp · bấm thẻ để xem đủ BTP</span>${searchMatches.map((row) => auditSearchPreviewMarkup(row, query)).join('')}</span>` : '';
-  return `<details class="bom-btp-group">
-    <summary class="bom-btp-group-summary"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${query ? highlightMatch(assembly, query) : fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${progress.toFixed(1)}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span>${searchPreview}</summary>
-    <div class="bom-btp-table-wrap"><table class="bom-btp-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${detailRows.map((row) => auditBtpTableRowMarkup(row, query)).join('')}</tbody></table></div>
-  </details>`;
+  const printSelected = state.materialPrintSelectedGroups.has(key);
+  const expanded = state.materialExpandedGroups.has(key);
+  return `<article class="bom-btp-group ${expanded ? 'is-expanded' : ''}" data-print-group="${esc(key)}">
+    <div class="bom-btp-group-header"><button class="bom-btp-group-summary" type="button" data-toggle-btp-group="${esc(key)}" aria-expanded="${expanded}"><span class="bom-card-toggle" aria-hidden="true">›</span><span class="bom-btp-group-main"><strong>${query ? highlightMatch(assembly, query) : fmt(assembly)}</strong>${drawing}${dimensions}<small>Sheet: ${fmt(sheet)} · Gồm ${fmt(btpCount)} BTP con</small></span><span class="status-pill ${statusClass}">${esc(status)}</span><span class="bom-group-progress"><span>${fmt(receivedCount)}/${fmt(btpCount)} BTP</span><strong>${progress.toFixed(1)}%</strong><i><b style="width:${progress.toFixed(1)}%"></b></i></span>${searchPreview}</button><div class="bom-card-print-actions"><label class="bom-print-select"><input type="checkbox" data-print-btp-group value="${esc(key)}" ${printSelected ? 'checked' : ''}><span>Chọn in</span></label><button class="button bom-print-single" type="button" data-print-btp-single="${esc(key)}" aria-label="In PDF ${esc(assembly)}">In PDF</button></div></div>
+    <div class="bom-btp-table-wrap" ${expanded ? '' : 'hidden'}><table class="bom-btp-table"><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách (Size)</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${detailRows.map((row) => auditBtpTableRowMarkup(row, query)).join('')}</tbody></table></div>
+  </article>`;
+}
+function btpPrintRowMarkup(row) {
+  const btp = row.btp;
+  const part = btp?.part_no || btp?.description || row.bomLine?.part_no || row.bomLine?.description || '—';
+  const remaining = btp ? getBtpShortageQuantity(btp) : null;
+  const status = btp ? (btp.status || auditStatus(row)) : 'Chưa có BTP';
+  const note = [...new Set([row.bomNote, row.bomLine?.note, row.bomParent?.note, btp?.note].map((value) => String(value || '').trim()).filter(Boolean))].join(' | ');
+  const events = String(btp?.daily_progress || '').split(/\s*;\s*/).filter(Boolean).map((event) => esc(event)).join('<br>') || '—';
+  const values = [
+    fmt(part), fmt(btp?.material_type), fmt(btp?.unit), fmt(btp?.size), fmt(btp?.length_mm),
+    fmt(btp?.design_quantity), fmt(btp?.received), fmt(remaining), events, fmt(btp?.joint_check),
+    `<span class="btp-print-status ${btp ? auditStatusClass(status) : 'danger'}">${esc(status)}</span>`, fmt(note || (btp ? '' : row.bomNote || 'BOM chưa có dòng BTP')),
+  ];
+  return `<tr>${values.map((value) => `<td>${value}</td>`).join('')}</tr>`;
+}
+function btpPrintGroupMarkup(group, index) {
+  const rows = group.detailRows || group.rows;
+  const first = rows[0] || group.rows[0];
+  const parent = first?.bomParent;
+  const btpRows = rows.filter((row) => row.btp);
+  const designTotal = btpRows.reduce((sum, row) => sum + (Number(row.btp.design_quantity) || 0), 0);
+  const receivedTotal = btpRows.reduce((sum, row) => sum + (Number(row.btp.received) || 0), 0);
+  const remainingTotal = btpRows.reduce((sum, row) => sum + (getBtpShortageQuantity(row.btp) || 0), 0);
+  const assembly = parent?.assembly || first?.bomLine?.parent || 'Chưa khớp cấu kiện BOM';
+  const drawing = parent?.drawing || first?.bomLine?.drawing || '';
+  const item = parent?.item || first?.bomLine?.item || '';
+  const size = parent?.size || first?.bomLine?.size || '';
+  const sheet = materialSheetName(first?.btp_source_sheet || parent?.source_sheet || first?.source_sheet);
+  const breakClass = index ? ' btp-print-page-break' : '';
+  return `<section class="btp-print-section${breakClass}">
+    <header class="btp-print-header"><div><span class="btp-print-brand">AMECC · PROJECT CONTROL</span><h1>Bảng chi tiết bán thành phẩm</h1><p>Thông tin BTP theo cấu kiện trong BOM</p></div><div class="btp-print-date"><span>Ngày in</span><strong>${esc(new Intl.DateTimeFormat('vi-VN', { dateStyle:'short', timeStyle:'short' }).format(new Date()))}</strong></div></header>
+    <div class="btp-print-project"><div><span>Dự án</span><strong>${esc(state.currentProject || '—')}</strong></div><div><span>Cấu kiện</span><strong>${fmt(assembly)}</strong></div><div><span>Bản vẽ</span><strong>${fmt(drawing)}</strong></div><div><span>Hạng mục</span><strong>${fmt(item)}</strong></div><div><span>Sheet BTP</span><strong>${fmt(sheet)}</strong></div><div><span>Quy cách</span><strong>${fmt(size)}</strong></div></div>
+    <div class="btp-print-totals"><span><small>Số dòng BTP</small><strong>${fmt(btpRows.length)}</strong></span><span><small>SL thiết kế</small><strong>${fmt(designTotal)}</strong></span><span><small>Đã nhận</small><strong>${fmt(receivedTotal)}</strong></span><span><small>Còn thiếu</small><strong>${fmt(remainingTotal)}</strong></span></div>
+    <table class="btp-print-table"><colgroup><col style="width:14%"><col style="width:7%"><col style="width:6%"><col style="width:8%"><col style="width:6%"><col style="width:5%"><col style="width:5%"><col style="width:5%"><col style="width:12%"><col style="width:5%"><col style="width:8%"><col style="width:19%"></colgroup><thead><tr><th>Mã BTP (Chi tiết)</th><th>Chủng loại</th><th>DVG</th><th>Quy cách</th><th>Chiều dài (mm)</th><th>SL thiết kế</th><th>Đã nhận</th><th>Còn thiếu</th><th>Tiến độ theo ngày</th><th>Ktra nối</th><th>Trạng thái</th><th>Ghi chú</th></tr></thead><tbody>${rows.map(btpPrintRowMarkup).join('')}</tbody></table>
+    <footer class="btp-print-footer"><span>AMECC · Dữ liệu trích từ BOM/BTP</span><span>${fmt(rows.length)} dòng chi tiết</span></footer>
+  </section>`;
+}
+function printBtpGroups(groups) {
+  if (!groups?.length) return;
+  document.querySelector('#btpPrintDocument')?.remove();
+  const documentNode = document.createElement('main');
+  documentNode.id = 'btpPrintDocument';
+  documentNode.innerHTML = groups.map(btpPrintGroupMarkup).join('');
+  document.body.append(documentNode);
+  document.body.classList.add('btp-printing');
+  const cleanup = () => {
+    document.body.classList.remove('btp-printing');
+    documentNode.remove();
+  };
+  window.addEventListener('afterprint', cleanup, { once:true });
+  window.print();
+}
+function syncBtpPrintSelectionUi() {
+  const selectedCount = state.materialPrintSelectedGroups.size;
+  const count = document.querySelector('#selectedBtpPrintCount');
+  if (count) count.textContent = `${fmt(selectedCount)} thẻ đã chọn`;
+  const printButton = document.querySelector('#printSelectedBtp');
+  if (printButton) printButton.disabled = selectedCount === 0;
+  const clearButton = document.querySelector('#clearBtpPrintSelection');
+  if (clearButton) clearButton.hidden = selectedCount === 0;
+  const pageKeys = [...document.querySelectorAll('#page .bom-btp-group[data-print-group]')].map((group) => group.dataset.printGroup);
+  const master = document.querySelector('#selectVisibleBtpForPrint');
+  if (master) {
+    const checkedCount = pageKeys.filter((key) => state.materialPrintSelectedGroups.has(key)).length;
+    master.checked = pageKeys.length > 0 && checkedCount === pageKeys.length;
+    master.indeterminate = checkedCount > 0 && checkedCount < pageKeys.length;
+  }
+}
+function bindBtpPrintActions(pageRoot) {
+  if (!pageRoot || pageRoot.dataset.btpPrintActionsBound) return;
+  pageRoot.dataset.btpPrintActionsBound = 'true';
+  pageRoot.addEventListener('change', (event) => {
+    const checkbox = event.target;
+    if (checkbox.matches?.('[data-print-btp-group]')) {
+      const group = state.materialPrintAvailableGroups.get(checkbox.value);
+      if (checkbox.checked && group) state.materialPrintSelectedGroups.set(checkbox.value, group);
+      else state.materialPrintSelectedGroups.delete(checkbox.value);
+      syncBtpPrintSelectionUi();
+      return;
+    }
+    if (checkbox.matches?.('#selectVisibleBtpForPrint')) {
+      pageRoot.querySelectorAll('.bom-btp-group[data-print-group]').forEach((card) => {
+        const key = card.dataset.printGroup;
+        const group = state.materialPrintAvailableGroups.get(key);
+        const cardCheckbox = card.querySelector('[data-print-btp-group]');
+        if (checkbox.checked && group) state.materialPrintSelectedGroups.set(key, group);
+        else state.materialPrintSelectedGroups.delete(key);
+        if (cardCheckbox) cardCheckbox.checked = checkbox.checked;
+      });
+      syncBtpPrintSelectionUi();
+    }
+  });
+  pageRoot.addEventListener('click', (event) => {
+    const toggle = event.target.closest?.('[data-toggle-btp-group]');
+    if (toggle) {
+      const key = toggle.dataset.toggleBtpGroup;
+      const card = toggle.closest('.bom-btp-group');
+      const expanded = !state.materialExpandedGroups.has(key);
+      if (expanded) state.materialExpandedGroups.add(key);
+      else state.materialExpandedGroups.delete(key);
+      toggle.setAttribute('aria-expanded', String(expanded));
+      card?.classList.toggle('is-expanded', expanded);
+      const table = card?.querySelector('.bom-btp-table-wrap');
+      if (table) table.hidden = !expanded;
+      return;
+    }
+    const singlePrint = event.target.closest?.('[data-print-btp-single]');
+    if (singlePrint) {
+      event.preventDefault();
+      const group = state.materialPrintAvailableGroups.get(singlePrint.dataset.printBtpSingle)
+        || state.materialPrintSelectedGroups.get(singlePrint.dataset.printBtpSingle);
+      if (group) printBtpGroups([group]);
+      return;
+    }
+    if (event.target.closest?.('#printSelectedBtp')) {
+      const groups = [...state.materialPrintSelectedGroups.values()];
+      if (groups.length) printBtpGroups(groups);
+      return;
+    }
+    if (event.target.closest?.('#clearBtpPrintSelection')) {
+      state.materialPrintSelectedGroups.clear();
+      const page = document.querySelector('#page');
+      if (page) {
+        const rendered = document.createElement('div');
+        rendered.innerHTML = materialsAuditPage();
+        for (const selector of ['.audit-table-heading','.bom-btp-groups']) {
+          const current = page.querySelector(selector);
+          const next = rendered.querySelector(selector);
+          if (current && next) current.innerHTML = next.innerHTML;
+        }
+      }
+      syncBtpPrintSelectionUi();
+    }
+  });
 }
 function materialAuditCache() {
   const { data, btpData, progressData } = state;
@@ -458,6 +638,10 @@ function materialsAuditPage() {
   state.materialPageIndex = Math.min(Math.max(0, state.materialPageIndex), pageCount - 1);
   const pageIndex = state.materialPageIndex;
   const pageGroups = allGroups.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  state.materialPrintAvailableGroups = new Map(allGroups.map((group) => [group.key, group]));
+  const printSelectionCount = state.materialPrintSelectedGroups.size;
+  const checkedOnPage = pageGroups.filter((group) => state.materialPrintSelectedGroups.has(group.key)).length;
+  const allPageGroupsSelected = pageGroups.length > 0 && checkedOnPage === pageGroups.length;
   const allSelected = options.length > 0 && selected.size === options.length;
   const sheetOptionsMarkup = options.map((option) => `<label class="sheet-check-option"><input type="checkbox" data-material-sheet value="${esc(option.key)}" ${selected.has(option.key) ? 'checked' : ''}><span>${esc(option.source_sheet)}</span><small>${esc(option.source_file)}</small></label>`).join('');
   const selectedLabel = allSelected ? `Tất cả sheet (${options.length})` : `${selected.size}/${options.length} sheet`;
@@ -485,7 +669,7 @@ function materialsAuditPage() {
       <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
     </section>
     <div class="stats-grid compact audit-stats">${statCard('Dòng đối chiếu',visibleRows.length,'Theo sheet, ngày, trạng thái và từ khóa')}${statCard('Dòng BTP còn thiếu',shortageCount,'Được đưa vào List thiếu','red')}${statCard('BOM chưa có BTP',visibleRows.filter((row) => row.kind === 'bom-only').length,'Kiểm tra phần chưa được lập BTP','gold')}${statCard('Liên kết cần xem',unmatchedCount,'BOM hoặc QLDA chưa khớp','blue')}</div>
-    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3></div><span class="count-chip">${allGroups.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, allGroups.length)} / ${fmt(allGroups.length)} cấu kiện` : '0 cấu kiện'}</span></div>
+    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3><span class="count-chip">${allGroups.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, allGroups.length)} / ${fmt(allGroups.length)} cấu kiện` : '0 cấu kiện'}</span></div><div class="btp-print-selection-actions"><label class="btp-print-page-select"><input id="selectVisibleBtpForPrint" type="checkbox" ${allPageGroupsSelected ? 'checked' : ''}><span>Chọn trang</span></label><span id="selectedBtpPrintCount" class="btp-print-selected-count">${fmt(printSelectionCount)} thẻ đã chọn</span><button class="button primary" id="printSelectedBtp" type="button" ${printSelectionCount ? '' : 'disabled'}>In PDF đã chọn</button><button class="button btp-print-clear" id="clearBtpPrintSelection" type="button" ${printSelectionCount ? '' : 'hidden'}>Bỏ chọn</button></div></div>
     <div class="bom-btp-groups">${pageGroups.map(auditBomGroupMarkup).join('') || '<div class="empty-state"><strong>Không có dòng phù hợp</strong><p>Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</p></div>'}</div>
     <div class="btp-pagination"><span>${fmt(allGroups.length)} cấu kiện · ${fmt(visibleRows.length)} dòng BTP phù hợp</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
     ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p id="auditShortageNote" class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;
@@ -682,6 +866,7 @@ function syncProjectFrozenColumnOffsets() {
 }
 function bindPage() {
   const pageRoot = document.querySelector('#page');
+  bindBtpPrintActions(pageRoot);
   syncProjectFrozenColumnOffsets();
   if (pageRoot && !pageRoot.dataset.projectFreezeLayoutBound) {
     pageRoot.dataset.projectFreezeLayoutBound = 'true';
@@ -997,6 +1182,7 @@ function bindPage() {
     else if (shortageNote) shortageNote.remove();
     else if (nextShortageNote) page.append(nextShortageNote);
     bindAuditPagination();
+    syncBtpPrintSelectionUi();
   };
   document.querySelector('#toggleMobileAuditFilters')?.addEventListener('click', (event) => {
     state.materialMobileFiltersOpen = !state.materialMobileFiltersOpen;
@@ -1480,6 +1666,10 @@ function invalidateProjectData(projectCode) {
   state.materialLotFilter = '';
 }
 function resetProjectData(projectCode) {
+  if (state.loadedProject !== projectCode) {
+    state.materialPrintSelectedGroups.clear();
+    state.materialExpandedGroups.clear();
+  }
   state.loadedProject = projectCode;
   state.data = null;
   state.btpData = null;
