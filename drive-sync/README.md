@@ -17,7 +17,7 @@ The first run scans all eligible files in both folders. Changed workbooks are re
 
 ## Website refresh button
 
-After the first setup, replace `Code.gs` with the latest [repository version](https://raw.githubusercontent.com/nguyenduchieu1208/Amecc/main/drive-sync/Code.gs) and save it once. Keep the existing one-minute `syncAmeccDrive` trigger and Script Properties. Any website viewer who knows the refresh password can then request a Drive check; the script runs with its owner's Drive permissions, reads only changed or previously failed files, and reports its status back to the website. Viewers do not need their own Drive access. The website applies a shared cooldown to prevent repeated requests.
+After the first setup, replace `Code.gs` with the latest [repository version](https://raw.githubusercontent.com/nguyenduchieu1208/Amecc/main/drive-sync/Code.gs) and save it once. Keep the existing one-minute `syncAmeccDrive` trigger and Script Properties. To start a sync yourself immediately, run `syncAmeccDrive` from the Apps Script editor; otherwise, the existing trigger checks Drive each minute. It reads only changed or previously failed files and skips unchanged workbooks.
 
 Use `stopAmeccDriveSync` to remove the time trigger. It leaves the data already imported on the site unchanged. When the site's workbook parser changes, run `npm run drive-sync:bundle` before deploying Pages so the pinned parser asset and its integrity hashes stay aligned.
 
