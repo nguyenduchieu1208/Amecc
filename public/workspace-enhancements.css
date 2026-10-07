@@ -651,3 +651,32 @@
   .project-report-card:fullscreen:not(.project-report-btp) .project-team-values { grid-column:1/-1; grid-row:2; }
   .project-report-card:fullscreen:not(.project-report-btp) .project-stage-report-row { grid-template-columns:minmax(0,1fr) 44px; }
 }
+
+/* Mobile project lookup keeps search visible and tucks the secondary filters behind one button. */
+.project-mobile-search-row,.project-mobile-extra-filters { display:contents; }
+.mobile-project-filter-toggle { display:none; }
+@media(max-width:700px) {
+  .project-progress-filter-panel { position:sticky; top:72px; z-index:11; padding:9px; }
+  .project-progress-toolbar { display:block; }
+  .project-mobile-search-row { display:flex; align-items:stretch; gap:8px; }
+  .project-mobile-search-row .project-catalog-search { flex:1; min-width:0; max-width:none; height:44px; }
+  .project-mobile-search-row .project-catalog-search input { min-width:0; font-size:14px; }
+  .mobile-project-filter-toggle { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:94px; min-height:44px; padding:0 10px; border:1px solid var(--line); background:var(--soft); color:var(--ink); font-size:11px; }
+  .mobile-project-filter-toggle .mobile-filter-chevron { transition:transform .2s; }
+  .mobile-expanded .mobile-project-filter-toggle .mobile-filter-chevron { transform:rotate(180deg); }
+  .project-mobile-extra-filters { display:none; }
+  .mobile-expanded .project-mobile-extra-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 8px; padding-top:9px; }
+  .project-mobile-extra-filters>.filter-label { display:grid; min-width:0; gap:5px; font-size:10px; white-space:normal; }
+  .project-mobile-extra-filters select { width:100%; min-width:0; height:44px; min-height:44px; padding:0 9px; font-size:14px; }
+  .project-table-frame { max-height:68dvh; overflow:auto; overflow-x:auto; -webkit-overflow-scrolling:touch; overscroll-behavior-x:contain; touch-action:pan-x pan-y; }
+  .project-progress-table { min-width:1850px; }
+  .project-progress-table td.project-action-column { position:static!important; right:auto; z-index:1; box-shadow:none; }
+  .project-progress-table th.project-action-column { position:sticky!important; top:0; right:auto; z-index:2; box-shadow:none; }
+}
+@media(max-width:380px) {
+  .mobile-project-filter-toggle { min-width:78px; padding:0 7px; }
+  .mobile-project-filter-toggle span { font-size:10px; }
+  .mobile-expanded .project-mobile-extra-filters { gap:8px 6px; }
+  .project-mobile-extra-filters>.filter-label { font-size:9px; }
+  .project-mobile-extra-filters select { height:42px; min-height:42px; padding:0 7px; font-size:13px; }
+}
