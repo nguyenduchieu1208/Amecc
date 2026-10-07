@@ -429,6 +429,15 @@ test('browser PL parser reads notes from the PL Remark sheet and links them by P
   assert.equal(payload.records[0].note, 'Check paint after fit-up');
 });
 
+test('Drive sync includes a safe one-time re-import entry point for parser/schema changes', async () => {
+  const { readFileSync } = await import('node:fs');
+  const script = readFileSync('drive-sync/Code.gs', 'utf8');
+  assert.match(script, /function refreshAmeccDriveData\(\)/);
+  assert.match(script, /key\.startsWith\(AMECC_SYNCED_PREFIX\)/);
+  assert.match(script, /key\.startsWith\(AMECC_FAILED_PREFIX\)/);
+  assert.match(script, /syncAmeccDrive\(\);/);
+});
+
 test('BTP parser recognizes detail headers, keeps dated progress, and excludes issue date fields', () => {
   const headers = ['Chủng loại','Part No.1','Size','Description','Length','Material',"T.Q'ty",'U.Weight','T.Weight','Đã nhận','SL Nhận','Còn thiếu','21/07',new Date('2026-07-23T00:00:00Z'),'Ktra nối','Lấy data','KO BB','Tôn','Cảnh báo thừa','DVG','MPR No','Qty MPR','Cutting No.','Qty Cutting','Date Issue','Ghi Chú'];
   const detail = ['Shape','BTP-001','L-75X75X6','ANGLE',350,'A36',2,'2,4','4,8',0,1,1,3,1,'✓','ok','x','PL10',null,'MCC','MPR-1',2,'CUT-1',2,'23/07/2026','Kiểm tra ghi chú'];

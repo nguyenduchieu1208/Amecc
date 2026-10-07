@@ -57,6 +57,17 @@ function retryFailedAmeccDriveSync() {
   syncAmeccDrive();
 }
 
+/** Re-import the current Drive workbooks once after a parser/schema update. */
+function refreshAmeccDriveData() {
+  const properties = PropertiesService.getScriptProperties();
+  const all = properties.getProperties();
+  const syncedKeys = Object.keys(all).filter((key) => key.startsWith(AMECC_SYNCED_PREFIX));
+  const failedKeys = Object.keys(all).filter((key) => key.startsWith(AMECC_FAILED_PREFIX));
+  [...syncedKeys, ...failedKeys].forEach((key) => properties.deleteProperty(key));
+  console.log(`Queued ${syncedKeys.length} known Drive workbook(s) for a full re-import.`);
+  syncAmeccDrive();
+}
+
 function assertSyncApiReady_(syncToken) {
   const response = UrlFetchApp.fetch(`${AMECC_SYNC.apiBaseUrl}/api/admin/drive-sync/health`, {
     method: 'get',
