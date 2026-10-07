@@ -485,6 +485,7 @@
 .project-progress-table th:nth-child(10),.project-progress-table td:nth-child(10) { left:793px; width:78px; min-width:78px!important; max-width:78px; }
 .project-progress-table th:nth-child(11),.project-progress-table td:nth-child(11) { left:871px; width:90px; min-width:90px!important; max-width:90px; box-shadow:4px 0 8px rgba(24,48,78,.09); }
 .project-progress-table th:nth-child(-n+11) { z-index:7; background:var(--soft); }
+.project-progress-table td:nth-child(-n+11) { background:var(--surface); }
 .project-progress-table tbody tr:hover td:nth-child(-n+11) { background:var(--soft); }
 @media(max-width:1250px) and (min-width:761px) {
   .project-progress-table th:nth-child(1),.project-progress-table td:nth-child(1) { width:34px; min-width:34px!important; max-width:34px; }
