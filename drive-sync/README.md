@@ -15,6 +15,10 @@ This Apps Script watches the two private Drive folders and imports changed `*PL.
 
 The first run scans all eligible files in both folders. Changed workbooks are retried if an API request fails; successful files are skipped until their Drive modification time, size, or filename changes. Check **Apps Script → Executions** for per-file `DONE`, `FAILED`, `REMOVED`, or `DELETE FAILED` records. A deletion API failure is queued and retried on the next trigger. `resetAmeccDriveSyncFailures` clears retry delays when you have corrected a permanent configuration issue.
 
+## Website refresh button
+
+After the first setup, replace `Code.gs` with the latest [repository version](https://raw.githubusercontent.com/nguyenduchieu1208/Amecc/main/drive-sync/Code.gs) and save it once. Keep the existing one-minute `syncAmeccDrive` trigger and Script Properties. Any website viewer who knows the refresh password can then request a Drive check; the script runs with its owner's Drive permissions, reads only changed or previously failed files, and reports its status back to the website. Viewers do not need their own Drive access. The website applies a shared cooldown to prevent repeated requests.
+
 Use `stopAmeccDriveSync` to remove the time trigger. It leaves the data already imported on the site unchanged. When the site's workbook parser changes, run `npm run drive-sync:bundle` before deploying Pages so the pinned parser asset and its integrity hashes stay aligned.
 
 When updating an existing Apps Script project after a parser/schema change, replace its `Code.gs` with this repository version and save it. Run `refreshAmeccQldaData` to re-import only project workbooks; it preserves PL/BTP sync markers and continues on later trigger runs if the first pass reaches its five-minute budget. Run `refreshAmeccDriveData` only when both PL/BTP and QLDA workbooks need a full re-import. This backfills newly parsed PL Remark notes and QLDA Shipment values into the site.

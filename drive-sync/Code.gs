@@ -101,6 +101,65 @@ function assertSyncApiReady_(syncToken) {
   }
 }
 
+function driveSyncRequest_(path, method, syncToken, payload) {
+  const options = {
+    method,
+    headers: {
+      apikey: AMECC_SYNC.apiKey,
+      Authorization: `Bearer ${syncToken}`,
+    },
+    muteHttpExceptions: true,
+  };
+  if (payload !== undefined) {
+    options.contentType = 'application/json';
+    options.payload = JSON.stringify(payload);
+  }
+  const response = UrlFetchApp.fetch(`${AMECC_SYNC.apiBaseUrl}${path}`, options);
+  const status = response.getResponseCode();
+  const text = response.getContentText();
+  let body = {};
+  try { body = text ? JSON.parse(text) : {}; } catch (_) { /* Use the response text in the error below. */ }
+  if (status < 200 || status >= 300) {
+    throw new Error(`Drive sync API ${status}: ${String(body.error || text).slice(0, 900)}`);
+  }
+  return body;
+}
+
+function getManualRefreshRequest_(syncToken) {
+  return driveSyncRequest_('/api/admin/drive-sync/refresh-request', 'get', syncToken).request;
+}
+
+function setManualRefreshStarted_(requestId, syncToken) {
+  return driveSyncRequest_('/api/admin/drive-sync/refresh-start', 'post', syncToken, { request_id:requestId }).request;
+}
+
+function reportManualRefreshProgress_(requestId, syncToken, message) {
+  try {
+    driveSyncRequest_('/api/admin/drive-sync/refresh-progress', 'post', syncToken, { request_id:requestId, message });
+  } catch (error) {
+    console.warn(`Could not report manual refresh progress: ${String(error && error.message ? error.message : error).slice(0, 300)}`);
+  }
+}
+
+function finishManualRefresh_(requestId, syncToken, status, message) {
+  return driveSyncRequest_('/api/admin/drive-sync/refresh-finish', 'post', syncToken, {
+    request_id:requestId, status, message,
+  });
+}
+
+function manualRefreshFailures_(properties, currentFiles) {
+  return currentFiles.map((entry) => ({
+    fileName: entry.file.getName(),
+    failure: parseProperty_(properties.getProperty(AMECC_FAILED_PREFIX + entry.file.getId())),
+  })).filter((entry) => entry.failure);
+}
+
+function manualRefreshFailureMessage_(failures) {
+  const summary = failures.slice(0, 4).map((entry) => `${entry.fileName}: ${String(entry.failure.message || 'lỗi đồng bộ').slice(0, 140)}`).join(' · ');
+  const extra = failures.length > 4 ? ` · và ${failures.length - 4} file khác` : '';
+  return `Apps Script đã kiểm tra Drive nhưng có ${failures.length} file lỗi: ${summary}${extra}`;
+}
+
 /** Trigger entry point. Imports changed PL/BTP and QLDA workbooks and safely retries failures. */
 function syncAmeccDrive() {
   const lock = LockService.getScriptLock();
@@ -109,12 +168,26 @@ function syncAmeccDrive() {
     return;
   }
   const startedAt = Date.now();
+  let syncToken = '';
+  let manualRefreshRequest = null;
   try {
     const properties = PropertiesService.getScriptProperties();
     const folderId = String(properties.getProperty(AMECC_FOLDER_PROPERTY) || '').trim();
     const qldaFolderId = String(properties.getProperty(AMECC_QLDA_FOLDER_PROPERTY) || AMECC_DEFAULT_QLDA_FOLDER_ID).trim();
-    const syncToken = String(properties.getProperty(AMECC_TOKEN_PROPERTY) || '').trim();
+    syncToken = String(properties.getProperty(AMECC_TOKEN_PROPERTY) || '').trim();
     if (!folderId || !qldaFolderId || !syncToken) throw new Error('One or more Drive folder IDs or the sync token are missing.');
+
+    try {
+      manualRefreshRequest = getManualRefreshRequest_(syncToken);
+      if (manualRefreshRequest?.status === 'queued') {
+        const failedKeys = Object.keys(properties.getProperties()).filter((key) => key.startsWith(AMECC_FAILED_PREFIX));
+        failedKeys.forEach((key) => properties.deleteProperty(key));
+        manualRefreshRequest = setManualRefreshStarted_(manualRefreshRequest.request_id, syncToken);
+      }
+    } catch (error) {
+      console.error(`Could not receive a manual Drive sync request: ${String(error && error.message ? error.message : error).slice(0, 500)}`);
+      manualRefreshRequest = null;
+    }
 
     const currentFiles = [];
     const renamedSources = [];
@@ -126,13 +199,27 @@ function syncAmeccDrive() {
       fileName: entry.file.getName(), category: entry.category, lastSeenAt: new Date().toISOString(),
     })));
     reconcileDeletedFiles_(properties, currentFiles, renamedSources, syncToken);
-    if (!pending.length) return;
+    if (!pending.length) {
+      if (manualRefreshRequest) {
+        const failures = manualRefreshFailures_(properties, currentFiles);
+        const status = failures.length ? 'failed' : 'completed';
+        const message = failures.length
+          ? manualRefreshFailureMessage_(failures)
+          : 'Đã kiểm tra Drive. Không có workbook nào thay đổi; dữ liệu trên hệ thống đã mới nhất.';
+        finishManualRefresh_(manualRefreshRequest.request_id, syncToken, status, message);
+      }
+      return;
+    }
     console.log(`Found ${pending.length} changed workbook(s) across PL/BTP and QLDA folders.`);
     const xlsx = loadXlsx_();
     const parser = loadParser_(xlsx);
 
-    for (const entry of pending) {
+    let deferredCount = 0;
+    let completedCount = 0;
+    for (let index = 0; index < pending.length; index += 1) {
+      const entry = pending[index];
       if (Date.now() - startedAt > AMECC_SYNC.runBudgetMs) {
+        deferredCount = pending.length - index;
         console.log('Execution time budget reached; remaining files will continue on the next trigger.');
         break;
       }
@@ -148,8 +235,12 @@ function syncAmeccDrive() {
           projectRows: summary.projectRows,
         }));
         properties.deleteProperty(AMECC_FAILED_PREFIX + entry.file.getId());
+        completedCount += 1;
         if (entry.category === 'projects') console.log(`DONE ${entry.file.getName()}: ${summary.projectRows} QLDA row(s).`);
         else console.log(`DONE ${entry.file.getName()}: ${summary.materialRows} PL + ${summary.btpRows} BTP row(s).`);
+        if (manualRefreshRequest) {
+          reportManualRefreshProgress_(manualRefreshRequest.request_id, syncToken, `Đã cập nhật ${entry.file.getName()} (${completedCount}/${pending.length} file thay đổi trong lượt này).`);
+        }
       } catch (error) {
         const message = String(error && error.message ? error.message : error).slice(0, 1500);
         properties.setProperty(AMECC_FAILED_PREFIX + entry.file.getId(), JSON.stringify({
@@ -158,9 +249,33 @@ function syncAmeccDrive() {
           message,
         }));
         console.error(`FAILED ${entry.file.getName()}: ${message}`);
+        if (manualRefreshRequest) {
+          reportManualRefreshProgress_(manualRefreshRequest.request_id, syncToken, `Lỗi ${entry.file.getName()}: ${message}`);
+        }
       }
     }
     reconcileDeletedFiles_(properties, currentFiles, [], syncToken);
+    if (manualRefreshRequest) {
+      if (deferredCount > 0) {
+        reportManualRefreshProgress_(manualRefreshRequest.request_id, syncToken, `Đã xử lý lượt này; còn ${deferredCount} file sẽ tiếp tục ở lần Apps Script kế tiếp.`);
+      } else {
+        const failures = manualRefreshFailures_(properties, currentFiles);
+        if (failures.length) {
+          finishManualRefresh_(manualRefreshRequest.request_id, syncToken, 'failed', manualRefreshFailureMessage_(failures));
+        } else {
+          finishManualRefresh_(manualRefreshRequest.request_id, syncToken, 'completed', `Đã đồng bộ xong ${completedCount} file thay đổi; các file không đổi được bỏ qua.`);
+        }
+      }
+    }
+  } catch (error) {
+    if (manualRefreshRequest && syncToken) {
+      try {
+        finishManualRefresh_(manualRefreshRequest.request_id, syncToken, 'failed', `Apps Script không thể hoàn tất đồng bộ Drive: ${String(error && error.message ? error.message : error).slice(0, 700)}`);
+      } catch (statusError) {
+        console.error(`Could not mark manual Drive sync as failed: ${String(statusError && statusError.message ? statusError.message : statusError).slice(0, 300)}`);
+      }
+    }
+    throw error;
   } finally {
     lock.releaseLock();
   }

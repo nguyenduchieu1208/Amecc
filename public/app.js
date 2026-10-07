@@ -167,7 +167,7 @@ function shell() {
         <div class="top-actions"><button class="workspace-refresh-button" id="workspaceRefreshButton" type="button" aria-haspopup="dialog" aria-controls="workspaceRefreshDialog" title="Làm mới số liệu">${icon('refresh')}<span>Làm mới</span></button></div>
       </header><section id="page" class="page" aria-live="polite"></section>
     </main>
-    <dialog class="workspace-refresh-dialog" id="workspaceRefreshDialog" aria-labelledby="workspaceRefreshTitle"><form id="workspaceRefreshForm"><div class="workspace-refresh-dialog-head"><span class="workspace-refresh-icon">${icon('refresh')}</span><div><h2 id="workspaceRefreshTitle">Làm mới số liệu</h2><p>Tải lại dữ liệu mới nhất từ máy chủ AMECC.</p></div></div><label for="workspaceRefreshPassword">Mật khẩu làm mới<input id="workspaceRefreshPassword" name="password" type="password" autocomplete="current-password" required minlength="8"></label><p class="workspace-refresh-message" id="workspaceRefreshMessage" role="status" aria-live="polite"></p><div class="workspace-refresh-dialog-actions"><button class="button workspace-refresh-cancel" id="closeWorkspaceRefresh" type="button">Đóng</button><button class="button primary" id="submitWorkspaceRefresh" type="submit">${icon('refresh')}<span>Cập nhật số liệu</span></button></div></form></dialog>
+    <dialog class="workspace-refresh-dialog" id="workspaceRefreshDialog" aria-labelledby="workspaceRefreshTitle"><form id="workspaceRefreshForm"><div class="workspace-refresh-dialog-head"><span class="workspace-refresh-icon">${icon('refresh')}</span><div><h2 id="workspaceRefreshTitle">Làm mới số liệu</h2><p>Yêu cầu Apps Script kiểm tra Drive và chỉ đồng bộ các file đã thay đổi.</p></div></div><label for="workspaceRefreshPassword">Mật khẩu làm mới<input id="workspaceRefreshPassword" name="password" type="password" autocomplete="current-password" required minlength="8"></label><p class="workspace-refresh-message" id="workspaceRefreshMessage" role="status" aria-live="polite"></p><div class="workspace-refresh-dialog-actions"><button class="button workspace-refresh-cancel" id="closeWorkspaceRefresh" type="button">Đóng</button><button class="button primary" id="submitWorkspaceRefresh" type="submit">${icon('refresh')}<span>Đồng bộ Drive ngay</span></button></div></form></dialog>
   </div>`;
   document.querySelector('#themeSelect').addEventListener('change', (event) => applyTheme(event.currentTarget.value));
   const refreshDialog = document.querySelector('#workspaceRefreshDialog');
@@ -185,7 +185,7 @@ function shell() {
     const message = document.querySelector('#workspaceRefreshMessage');
     const submit = document.querySelector('#submitWorkspaceRefresh');
     submit.disabled = true;
-    message.textContent = 'Đang xác thực và tải dữ liệu mới…';
+    message.textContent = 'Đang gửi yêu cầu đồng bộ Drive…';
     message.className = 'workspace-refresh-message';
     try {
       const result = await api('/api/data/refresh', {
@@ -193,19 +193,46 @@ function shell() {
         body:JSON.stringify({ password:passwordInput.value }),
       });
       passwordInput.value = '';
-      projectDataRequests.clear();
-      projectDashboardRequests.clear();
-      state.projectDashboardData = null;
-      state.projectDashboardDataKey = '';
-      state.loadedProject = '';
-      state.data = null;
-      state.btpData = null;
-      state.progressData = null;
-      state.auditDataCache = null;
-      await refreshProjects();
-      await renderPage();
-      message.textContent = `Đã tải lại số liệu mới nhất. Có thể làm mới tiếp sau ${fmt(result.cooldown_seconds)} giây.`;
-      message.className = 'workspace-refresh-message success-message';
+      const reloadWorkspaceData = async () => {
+        projectDataRequests.clear();
+        projectDashboardRequests.clear();
+        state.projectDashboardData = null;
+        state.projectDashboardDataKey = '';
+        state.loadedProject = '';
+        state.data = null;
+        state.btpData = null;
+        state.progressData = null;
+        state.auditDataCache = null;
+        await refreshProjects();
+        await renderPage();
+      };
+      message.textContent = result.already_running
+        ? 'Đã có lượt đồng bộ đang chạy. Đang kết nối để xem tiến độ…'
+        : 'Đã gửi yêu cầu. Đang chờ Apps Script kiểm tra Drive…';
+      const deadline = Date.now() + 15 * 60 * 1000;
+      let finished = false;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, Math.max(2000, Number(result.poll_interval_seconds || 5) * 1000)));
+        let refreshStatus;
+        try {
+          refreshStatus = await api(`/api/data/refresh/${encodeURIComponent(result.request_id)}`);
+        } catch (pollError) {
+          message.textContent = `Đang chờ Apps Script đồng bộ Drive… ${pollError.message || ''}`;
+          continue;
+        }
+        if (refreshStatus.status === 'completed' || refreshStatus.status === 'failed') {
+          await reloadWorkspaceData();
+          finished = true;
+          message.textContent = refreshStatus.message || (refreshStatus.status === 'completed' ? 'Đồng bộ Drive hoàn tất.' : 'Apps Script gặp lỗi khi đồng bộ Drive.');
+          message.className = `workspace-refresh-message ${refreshStatus.status === 'completed' ? 'success-message' : 'error-message'}`;
+          break;
+        }
+        message.textContent = refreshStatus.message || 'Đang chờ Apps Script đồng bộ Drive…';
+      }
+      if (!finished) {
+        message.textContent = 'Apps Script vẫn đang xử lý. Bạn có thể đóng cửa sổ; bấm Làm mới sau để tiếp tục theo dõi lượt này.';
+        message.className = 'workspace-refresh-message';
+      }
     } catch (error) {
       message.textContent = error.message || 'Không thể làm mới dữ liệu.';
       message.className = 'workspace-refresh-message error-message';

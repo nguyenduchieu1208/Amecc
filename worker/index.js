@@ -316,19 +316,92 @@ async function authorizeManualDataRefresh(request, env) {
     ? Math.min(3600, Math.max(10, Math.floor(configuredCooldown)))
     : 60;
   const now = Math.floor(Date.now() / 1000);
+  const requestId = crypto.randomUUID();
   const allowed = await env.DB.prepare(`
-    INSERT INTO manual_refresh_state (id, last_refresh_at) VALUES ('workspace', ?)
-    ON CONFLICT(id) DO UPDATE SET last_refresh_at = excluded.last_refresh_at
-      WHERE manual_refresh_state.last_refresh_at <= ?
-    RETURNING last_refresh_at
-  `).bind(now, now - cooldownSeconds).first();
+    INSERT INTO manual_refresh_state
+      (id, last_refresh_at, request_id, refresh_status, requested_at, started_at, completed_at, refresh_message)
+    VALUES ('workspace', ?, ?, 'queued', ?, NULL, NULL, 'Đã xếp hàng chờ Apps Script đồng bộ Drive.')
+    ON CONFLICT(id) DO UPDATE SET
+      last_refresh_at = excluded.last_refresh_at,
+      request_id = excluded.request_id,
+      refresh_status = 'queued',
+      requested_at = excluded.requested_at,
+      started_at = NULL,
+      completed_at = NULL,
+      refresh_message = excluded.refresh_message
+    WHERE manual_refresh_state.last_refresh_at <= ?
+      AND COALESCE(manual_refresh_state.refresh_status, '') NOT IN ('queued', 'running')
+    RETURNING request_id, refresh_status, requested_at
+  `).bind(now, requestId, now, now - cooldownSeconds).first();
 
   if (!allowed) {
-    const previous = await env.DB.prepare('SELECT last_refresh_at FROM manual_refresh_state WHERE id = ?').bind('workspace').first();
+    const previous = await env.DB.prepare('SELECT last_refresh_at, refresh_status FROM manual_refresh_state WHERE id = ?').bind('workspace').first();
+    if (['queued', 'running'].includes(previous?.refresh_status)) {
+      const active = await env.DB.prepare('SELECT request_id, refresh_status AS status FROM manual_refresh_state WHERE id = ?').bind('workspace').first();
+      return json({ ok:true, request_id:active.request_id, status:active.status, cooldown_seconds:cooldownSeconds, poll_interval_seconds:10, already_running:true });
+    }
     const retryAfter = Math.max(1, Number(previous?.last_refresh_at || now) + cooldownSeconds - now);
     throw new HttpError(429, `Vui lòng đợi ${retryAfter} giây rồi làm mới lại.`);
   }
-  return json({ ok:true, cooldown_seconds:cooldownSeconds, available_at:now + cooldownSeconds });
+  return json({ ok:true, request_id:allowed.request_id, status:allowed.refresh_status, cooldown_seconds:cooldownSeconds, poll_interval_seconds:10 });
+}
+
+async function getManualDataRefreshStatus(requestId, env) {
+  if (!/^[0-9a-f-]{36}$/i.test(requestId)) throw new HttpError(400, 'Mã yêu cầu làm mới không hợp lệ.');
+  const status = await env.DB.prepare(`
+    SELECT request_id, refresh_status AS status, requested_at, started_at, completed_at, refresh_message AS message
+    FROM manual_refresh_state WHERE id = ? AND request_id = ?
+  `).bind('workspace', requestId).first();
+  if (!status) throw new HttpError(404, 'Không tìm thấy yêu cầu đồng bộ Drive này.');
+  return json(status);
+}
+
+async function getDriveRefreshRequest(request, env) {
+  await requireDriveSync(request, env);
+  const refreshRequest = await env.DB.prepare(`
+    SELECT request_id, refresh_status AS status, requested_at, started_at
+    FROM manual_refresh_state WHERE id = ? AND refresh_status IN ('queued', 'running')
+  `).bind('workspace').first();
+  return json({ request:refreshRequest || null });
+}
+
+async function updateDriveRefreshRequest(request, env, action) {
+  await requireDriveSync(request, env);
+  const body = await request.json().catch(() => null);
+  const requestId = String(body?.request_id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(requestId)) throw new HttpError(400, 'Mã yêu cầu đồng bộ không hợp lệ.');
+  const now = Math.floor(Date.now() / 1000);
+
+  if (action === 'start') {
+    const started = await env.DB.prepare(`
+      UPDATE manual_refresh_state SET refresh_status = 'running', started_at = COALESCE(started_at, ?),
+        refresh_message = 'Apps Script đang quét các thư mục Drive và đồng bộ file đã thay đổi.'
+      WHERE id = ? AND request_id = ? AND refresh_status IN ('queued', 'running')
+      RETURNING request_id, refresh_status AS status, started_at
+    `).bind(now, 'workspace', requestId).first();
+    if (!started) throw new HttpError(409, 'Yêu cầu đồng bộ không còn ở trạng thái chờ chạy.');
+    return json({ ok:true, request:started });
+  }
+
+  if (action === 'progress') {
+    const message = String(body?.message || 'Apps Script đang đồng bộ Drive.').slice(0, 900);
+    const updated = await env.DB.prepare(`
+      UPDATE manual_refresh_state SET refresh_message = ?
+      WHERE id = ? AND request_id = ? AND refresh_status = 'running'
+      RETURNING request_id
+    `).bind(message, 'workspace', requestId).first();
+    return json({ ok:Boolean(updated) });
+  }
+
+  const status = String(body?.status || '');
+  if (!['completed', 'failed'].includes(status)) throw new HttpError(400, 'Trạng thái hoàn tất không hợp lệ.');
+  const message = String(body?.message || (status === 'completed' ? 'Đồng bộ Drive hoàn tất.' : 'Đồng bộ Drive gặp lỗi.')).slice(0, 900);
+  const finished = await env.DB.prepare(`
+    UPDATE manual_refresh_state SET refresh_status = ?, completed_at = ?, refresh_message = ?
+    WHERE id = ? AND request_id = ? AND refresh_status IN ('queued', 'running')
+    RETURNING request_id, refresh_status AS status, completed_at
+  `).bind(status, now, message, 'workspace', requestId).first();
+  return json({ ok:Boolean(finished), request:finished || null });
 }
 
 async function login(request, env) {
@@ -875,10 +948,16 @@ async function route(request, env) {
   if (request.method === 'POST' && path === '/api/auth/login') return login(request, env);
   if (request.method === 'POST' && path === '/api/auth/logout') return logout(request, env);
   if (request.method === 'POST' && path === '/api/data/refresh') return authorizeManualDataRefresh(request, env);
+  const refreshStatusMatch = path.match(/^\/api\/data\/refresh\/([0-9a-f-]{36})$/i);
+  if (request.method === 'GET' && refreshStatusMatch) return getManualDataRefreshStatus(refreshStatusMatch[1], env);
   if (request.method === 'GET' && path === '/api/auth/me') {
     const user = await currentUser(request, env);
     return json({ user: user ? { id: user.id, username: user.username, role: user.role } : null });
   }
+  if (request.method === 'GET' && path === '/api/admin/drive-sync/refresh-request') return getDriveRefreshRequest(request, env);
+  if (request.method === 'POST' && path === '/api/admin/drive-sync/refresh-start') return updateDriveRefreshRequest(request, env, 'start');
+  if (request.method === 'POST' && path === '/api/admin/drive-sync/refresh-progress') return updateDriveRefreshRequest(request, env, 'progress');
+  if (request.method === 'POST' && path === '/api/admin/drive-sync/refresh-finish') return updateDriveRefreshRequest(request, env, 'finish');
   if (request.method === 'GET' && path === '/api/admin/drive-sync/health') {
     await requireDriveSync(request, env);
     return json({ ok: true, scope: 'pl-btp-qlda-import' });
