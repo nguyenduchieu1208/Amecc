@@ -308,11 +308,6 @@
 .project-chart-expand svg { width:14px; height:14px; }
 .project-chart-notice { min-height:0; margin:0; color:var(--status-danger); font-size:10px; }
 .project-chart-notice:empty { display:none; }
-.project-report-card:fullscreen { width:100vw; height:100vh; min-height:100vh; padding:24px; overflow:auto; border:0; border-radius:0; background:var(--surface); box-shadow:none; }
-.project-report-card:fullscreen .project-report-caption>div { gap:8px; }
-.project-report-card:fullscreen .project-report-card figcaption strong,.project-report-card:fullscreen figcaption strong { font-size:18px; }
-.project-report-card:fullscreen .project-dashboard-svg { height:min(70vh,720px); }
-.project-report-card:fullscreen .project-chart-expand { position:sticky; top:0; }
 .project-chart-legend,.project-team-legend { display:flex; flex-wrap:wrap; gap:8px 14px; margin:0 0 6px; color:var(--muted); font-size:9px; }
 .project-chart-legend span,.project-team-legend span { display:inline-flex; align-items:center; gap:5px; }
 .project-chart-legend i,.project-team-legend i { width:9px; height:9px; flex:none; border-radius:50%; background:var(--chart-accent); }
@@ -378,28 +373,38 @@
 .project-export-actions { grid-area:export; display:grid; align-content:center; justify-items:stretch; gap:4px; min-width:0; }
 .project-export-actions>.button { width:100%; min-height:43px; white-space:nowrap; }
 .project-export-actions>small,.project-export-message { overflow-wrap:anywhere; font-size:8px; line-height:1.35; }
-.project-shipment-sync-notice { margin:0 0 13px; border-color:color-mix(in srgb,var(--status-info) 28%,var(--line)); background:var(--status-info-bg); color:var(--status-info); font-size:10px; }
-.project-shipment-sync-notice code { padding:2px 5px; border-radius:4px; background:var(--surface); font-size:9px; }
 .project-report-card:fullscreen {
+  position:fixed;
+  inset:0;
+  margin:auto;
   display:flex;
   flex-direction:column;
-  width:100vw;
-  height:100dvh;
-  max-height:100dvh;
+  box-sizing:border-box;
+  width:min(96vw,1680px);
+  height:min(92dvh,1000px);
+  max-width:96vw;
+  max-height:92dvh;
   min-height:0;
   padding:clamp(14px,2vw,28px);
   overflow:hidden;
-  border:0;
-  border-radius:0;
-  box-shadow:none;
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow:0 24px 80px rgba(13,31,55,.28);
 }
+.project-report-card:fullscreen::backdrop { background:rgba(11,24,40,.68); backdrop-filter:blur(3px); }
 .project-report-card:fullscreen figcaption { flex:none; margin-bottom:12px; }
 .project-report-card:fullscreen .project-report-caption>div { gap:8px; }
 .project-report-card:fullscreen .project-report-card figcaption strong,.project-report-card:fullscreen figcaption strong { font-size:18px; }
 .project-report-card:fullscreen .project-chart-legend { flex:none; }
-.project-report-card:fullscreen .project-chart-scroll { display:flex; flex:1; min-height:0; overflow:hidden; }
-.project-report-card:fullscreen .project-dashboard-svg { width:100%; max-width:100%; height:100%; max-height:100%; }
+.project-report-card:fullscreen .project-chart-scroll { display:flex; flex:1; align-items:center; justify-content:center; min-height:0; overflow:hidden; }
+.project-report-card:fullscreen .project-dashboard-svg { flex:0 1 auto; width:auto; max-width:100%; height:auto; max-height:100%; }
+.project-report-card:fullscreen>.project-stage-report-list,
+.project-report-card:fullscreen>.project-team-report,
+.project-report-card:fullscreen>.project-receiver-report { flex:1; align-content:center; min-height:0; overflow:auto; }
 .project-report-card:fullscreen .project-chart-expand { position:static; }
+@media(max-width:580px) {
+  .project-report-card:fullscreen { width:96vw; height:94dvh; max-width:96vw; max-height:94dvh; padding:12px; border-radius:12px; }
+}
 
 @media(max-width:1250px) {
   .project-progress-toolbar {

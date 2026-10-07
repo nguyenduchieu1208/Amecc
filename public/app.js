@@ -591,7 +591,6 @@ function projectsPage() {
   const query = state.projectSearch.trim();
   const normalizedQuery = normalizeProjectSearch(query);
   const shipments = [...new Set(rows.map((row) => String(row.shipment || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b,'vi',{numeric:true,sensitivity:'base'}));
-  const shipmentDataMissing = rows.length > 0 && shipments.length === 0;
   const shipmentRows = rows.filter((row) => !state.projectShipmentFilter || String(row.shipment || '').trim() === state.projectShipmentFilter);
   const items = [...new Set(shipmentRows.map((row) => String(row.item || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b,'vi',{numeric:true,sensitivity:'base'}));
   const itemRows = shipmentRows.filter((row) => !state.projectItemFilter || String(row.item || '').trim() === state.projectItemFilter);
@@ -622,7 +621,6 @@ function projectsPage() {
   const projectExportMarkup = `<div class="project-export-actions"><button class="button primary" id="exportProjectWorkbook" type="button" ${rows.length ? '' : 'disabled'}>${icon('download')}<span>Xuất Excel đã lọc cột</span></button><input id="projectExportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden><small>Chọn file QLDA gốc để giữ màu và định dạng.</small><span id="projectExportMessage" class="project-export-message" aria-live="polite"></span></div>`;
   return `${heading('PROJECT DELIVERY · QLDA','Quản lý dự án','Tra cứu cấu kiện và xem tiến độ 5 công đoạn trong một bảng tổng hợp.',projectSelect('progress'))}
     <div class="project-progress-controls"><section class="panel project-progress-filter-panel"><div class="project-progress-toolbar">${projectFilterMarkup}</div></section>${projectExportMarkup}</div>
-    ${shipmentDataMissing ? '<div class="notice project-shipment-sync-notice">Workbook QLDA trên Drive có cột Shipment nhưng dữ liệu đã lưu chưa có cột này. Sau khi cập nhật Apps Script, chạy <code>refreshAmeccQldaData()</code> một lần để nạp lại các file QLDA.</div>' : ''}
     <div class="stats-grid compact project-progress-stats">${statCard('Cấu kiện',filtered.length,'Theo bộ lọc hiện tại')}${statCard('Đã bàn giao',completed,'Hoàn thành công đoạn 5','green')}${statCard('Đang thực hiện',active,'Đã có ghi nhận sản xuất','gold')}${statCard('Tổng khối lượng · kg',filtered.reduce((sum, row) => sum + (Number(row.total_weight) || 0), 0),'Theo cột Tổng KL')}</div>
     <div class="section-heading project-progress-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Tiến độ cấu kiện <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}</span></h3></div><span class="count-chip">${filtered.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, filtered.length)} / ${filtered.length.toLocaleString('vi-VN')}` : '0 cấu kiện'}</span></div>
     ${filtered.length ? `<div class="project-table-frame"><table class="project-progress-table"><thead><tr><th>STT</th><th>Shipment</th><th>Hạng mục</th><th>Tổ</th><th>Số chi tiết (Mã CK)</th><th>Bản vẽ</th><th>Quy cách (Size)</th><th>T’Qty</th><th>Đơn trọng</th><th>Tổng KL (kg)</th><th>Trạng thái</th>${projectStages.map((stage) => `<th class="project-stage-column ${stage.tone}">${esc(stage.label)}</th>`).join('')}<th class="project-action-column">Thao tác</th></tr></thead><tbody>${rowsMarkup}</tbody></table></div><div class="btp-pagination project-pagination"><span>${filtered.length.toLocaleString('vi-VN')} cấu kiện${filtered.length !== rows.length ? ` · ${rows.length.toLocaleString('vi-VN')} toàn dự án` : ''}</span><div><button class="button" id="projectPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="projectNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>` : '<div class="empty-state"><strong>Không tìm thấy cấu kiện</strong><p>Hãy đổi từ khóa hoặc bộ lọc trạng thái.</p></div>'}
@@ -664,8 +662,34 @@ function bindPlFileDeleteButtons() {
     }
   }));
 }
+function syncProjectFrozenColumnOffsets() {
+  document.querySelectorAll('.project-table-frame').forEach((frame) => {
+    const table = frame.querySelector('.project-progress-table');
+    const headerCells = table?.tHead?.rows?.[0]?.cells;
+    if (!headerCells || headerCells.length < 11) return;
+    let left = 0;
+    for (let index = 0; index < 11; index += 1) {
+      const offset = `${left}px`;
+      headerCells[index].style.left = offset;
+      table.querySelectorAll('tbody tr').forEach((row) => {
+        if (row.cells[index]) row.cells[index].style.left = offset;
+      });
+      left += headerCells[index].getBoundingClientRect().width;
+    }
+  });
+}
 function bindPage() {
   const pageRoot = document.querySelector('#page');
+  syncProjectFrozenColumnOffsets();
+  if (pageRoot && !pageRoot.dataset.projectFreezeLayoutBound) {
+    pageRoot.dataset.projectFreezeLayoutBound = 'true';
+    if (typeof ResizeObserver === 'function') {
+      pageRoot._projectFreezeResizeObserver = new ResizeObserver(() => requestAnimationFrame(syncProjectFrozenColumnOffsets));
+      pageRoot._projectFreezeResizeObserver.observe(pageRoot);
+    }
+    window.addEventListener('resize', () => requestAnimationFrame(syncProjectFrozenColumnOffsets));
+    document.fonts?.ready?.then(() => syncProjectFrozenColumnOffsets());
+  }
   document.querySelectorAll('.project-table-frame').forEach((frame) => {
     if (frame.dataset.dragScrollBound) return;
     frame.dataset.dragScrollBound = 'true';
