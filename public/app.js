@@ -8,7 +8,7 @@ import { exportBtpShortageWorkbook, filterBtpRowsByReceiptDate } from './shortag
 import { renderMaterialDashboard } from './material-dashboard.js';
 import { buildMaterialAuditRows, hasBtpIdentity, isPurchasingMaterialSheet, materialAuditRowSearchText, materialSheetKey, materialSheetName } from './material-linkage.js';
 import { readProjectWorkbook } from './project-import.js';
-import { renderProjectDashboard } from './project-dashboard.js';
+import { dateFilterMarkup, parseDateFilter, renderProjectDashboard } from './project-dashboard.js';
 const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
@@ -498,7 +498,7 @@ function materialDashboardPage() {
     : 'Toàn bộ sheet của dự án';
   const chartRange = { from:state.materialDashboardStartDate, to:state.materialDashboardEndDate, metric:state.materialDashboardMetric };
   return `${heading('MATERIAL DASHBOARD · BOM & VẬT TƯ','Dashboard BOM & vật tư','Chọn sheet, khoảng ngày và đơn vị đo; rê chuột lên biểu đồ để xem số liệu chi tiết.',projectSelect('materials'))}
-    <div class="audit-dashboard-filter"><label class="filter-label">Sheet dashboard<select id="materialDashboardSheetFilter"><option value="">Tất cả sheet (${options.length})</option>${options.map((option) => `<option value="${esc(option.key)}" ${option.key === state.materialDashboardSheetFilter ? 'selected' : ''}>${esc(option.source_sheet)} · ${esc(option.source_file)}</option>`).join('')}</select></label><label class="filter-label">Từ ngày<input type="date" id="materialDashboardStartDate" value="${esc(state.materialDashboardStartDate)}"></label><label class="filter-label">Đến ngày<input type="date" id="materialDashboardEndDate" value="${esc(state.materialDashboardEndDate)}"></label><label class="filter-label">Đơn vị biểu đồ<select id="materialDashboardMetric"><option value="quantity" ${state.materialDashboardMetric === 'quantity' ? 'selected' : ''}>Số lượng BTP</option><option value="kg" ${state.materialDashboardMetric === 'kg' ? 'selected' : ''}>Khối lượng · kg</option><option value="ton" ${state.materialDashboardMetric === 'ton' ? 'selected' : ''}>Khối lượng · tấn</option></select></label><span class="source-chip">Nguồn: ${esc(rows[0]?.source_file || `${state.currentProject}PL.xlsx`)}</span></div>
+    <div class="audit-dashboard-filter"><label class="filter-label">Sheet dashboard<select id="materialDashboardSheetFilter"><option value="">Tất cả sheet (${options.length})</option>${options.map((option) => `<option value="${esc(option.key)}" ${option.key === state.materialDashboardSheetFilter ? 'selected' : ''}>${esc(option.source_sheet)} · ${esc(option.source_file)}</option>`).join('')}</select></label>${dateFilterMarkup('materialDashboardStartDate', 'Từ ngày', state.materialDashboardStartDate)}${dateFilterMarkup('materialDashboardEndDate', 'Đến ngày', state.materialDashboardEndDate)}<label class="filter-label">Đơn vị biểu đồ<select id="materialDashboardMetric"><option value="quantity" ${state.materialDashboardMetric === 'quantity' ? 'selected' : ''}>Số lượng BTP</option><option value="kg" ${state.materialDashboardMetric === 'kg' ? 'selected' : ''}>Khối lượng · kg</option><option value="ton" ${state.materialDashboardMetric === 'ton' ? 'selected' : ''}>Khối lượng · tấn</option></select></label><span class="source-chip">Nguồn: ${esc(rows[0]?.source_file || `${state.currentProject}PL.xlsx`)}</span></div>
     <div class="stats-grid compact audit-dashboard-stats">${statCard('Dòng BTP',selectedRows.length,selectedLabel)}${statCard('Đã nhận',selectedRows.reduce((sum, row) => sum + (btpReceivedQuantity(row) || 0), 0),'Cộng từ các sheet đang xem','green')}${statCard('Còn thiếu',selectedRows.reduce((sum, row) => sum + (getBtpShortageQuantity(row) || 0), 0),'Theo cột Còn thiếu','red')}${statCard('Đơn vị giao',new Set(selectedRows.map((row) => row.unit).filter(Boolean)).size,'Theo DVG trong file BTP')}</div>
     ${renderMaterialDashboard(selectedRows, selectedLabel, chartRange)}`;
 }
@@ -745,6 +745,39 @@ function bindPage() {
     updateImportProjectPreview();
   });
   updateImportFileMode();
+  const bindDateFilter = (id, onChange) => {
+    const input = document.getElementById(id);
+    const picker = document.getElementById(`${id}Picker`);
+    const button = document.querySelector(`[data-date-open="${id}"]`);
+    if (!input || !picker || !button) return;
+    input.addEventListener('input', () => input.setCustomValidity(''));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); input.blur(); }
+    });
+    input.addEventListener('change', () => {
+      const iso = parseDateFilter(input.value);
+      if (iso === null) {
+        input.setCustomValidity('Nhập ngày hợp lệ theo định dạng dd/mm/yyyy, ví dụ 01/09/2026.');
+        input.reportValidity();
+        return;
+      }
+      input.setCustomValidity('');
+      onChange(iso);
+    });
+    picker.addEventListener('change', () => onChange(picker.value));
+    button.addEventListener('pointerdown', (event) => event.preventDefault());
+    button.addEventListener('click', () => {
+      const iso = parseDateFilter(input.value);
+      if (iso) picker.value = iso;
+      try {
+        if (typeof picker.showPicker === 'function') picker.showPicker();
+        else { picker.focus(); picker.click(); }
+      } catch {
+        picker.focus();
+        picker.click();
+      }
+    });
+  };
   document.querySelector('#projectFilter')?.addEventListener('change', async (event) => {
     state.currentProject = event.target.value;
     state.materialLotFilter = '';
@@ -774,14 +807,8 @@ function bindPage() {
     bindPage();
     window.scrollTo(0, position);
   };
-  document.querySelector('#projectDashboardStartDate')?.addEventListener('change', (event) => {
-    state.projectDashboardStartDate = event.currentTarget.value;
-    rerenderProjectDashboard();
-  });
-  document.querySelector('#projectDashboardEndDate')?.addEventListener('change', (event) => {
-    state.projectDashboardEndDate = event.currentTarget.value;
-    rerenderProjectDashboard();
-  });
+  bindDateFilter('projectDashboardStartDate', (value) => { state.projectDashboardStartDate = value; rerenderProjectDashboard(); });
+  bindDateFilter('projectDashboardEndDate', (value) => { state.projectDashboardEndDate = value; rerenderProjectDashboard(); });
   document.querySelector('#projectDashboardMetric')?.addEventListener('change', (event) => {
     state.projectDashboardMetric = event.currentTarget.value;
     rerenderProjectDashboard();
@@ -891,14 +918,8 @@ function bindPage() {
     state.materialDashboardSheetFilter = event.currentTarget.value;
     rerenderMaterialDashboard();
   });
-  document.querySelector('#materialDashboardStartDate')?.addEventListener('change', (event) => {
-    state.materialDashboardStartDate = event.currentTarget.value;
-    rerenderMaterialDashboard();
-  });
-  document.querySelector('#materialDashboardEndDate')?.addEventListener('change', (event) => {
-    state.materialDashboardEndDate = event.currentTarget.value;
-    rerenderMaterialDashboard();
-  });
+  bindDateFilter('materialDashboardStartDate', (value) => { state.materialDashboardStartDate = value; rerenderMaterialDashboard(); });
+  bindDateFilter('materialDashboardEndDate', (value) => { state.materialDashboardEndDate = value; rerenderMaterialDashboard(); });
   document.querySelector('#materialDashboardMetric')?.addEventListener('change', (event) => {
     state.materialDashboardMetric = event.currentTarget.value;
     rerenderMaterialDashboard();

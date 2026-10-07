@@ -30,6 +30,41 @@ function displayDate(value) {
   return `${day}/${month}`;
 }
 
+export function formatDateFilter(value) {
+  const normalized = isoDate(value);
+  if (!normalized) return '';
+  const [year, month, day] = normalized.split('-');
+  return `${day}/${month}/${year}`;
+}
+
+export function parseDateFilter(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (/^\d{8}$/.test(text)) {
+    const day = Number(text.slice(0, 2));
+    const month = Number(text.slice(2, 4));
+    const year = Number(text.slice(4, 8));
+    if (year < 1900 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const checked = new Date(Date.UTC(year, month - 1, day));
+    if (checked.getUTCFullYear() !== year || checked.getUTCMonth() !== month - 1 || checked.getUTCDate() !== day) return null;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  const match = text.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (year < 1900 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const checked = new Date(Date.UTC(year, month - 1, day));
+  if (checked.getUTCFullYear() !== year || checked.getUTCMonth() !== month - 1 || checked.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+export function dateFilterMarkup(id, label, value) {
+  const iso = isoDate(value);
+  return `<label class="filter-label">${esc(label)}<span class="date-entry-control"><input type="text" id="${esc(id)}" class="date-entry-text" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="dd/mm/yyyy" value="${esc(formatDateFilter(iso))}" aria-label="${esc(label)} · nhập ngày/tháng/năm"><button type="button" class="date-entry-calendar" data-date-open="${esc(id)}" aria-label="${esc(label)} · mở lịch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></button><input type="date" id="${esc(id)}Picker" class="date-native-picker" value="${esc(iso)}" tabindex="-1" aria-hidden="true"></span></label>`;
+}
+
 function weight(row, stage) {
   const recorded = number(row?.[stage.weight]);
   if (recorded !== null && recorded > 0) return recorded;
@@ -177,7 +212,7 @@ export function renderProjectDashboard(rows, options = {}) {
   const percent = total ? Math.min(100, delivered / total * 100) : 0;
   const emptyRange = Boolean(range.from && range.to && range.from > range.to);
   return `<section class="project-dashboard" aria-label="Dashboard báo cáo quản lý dự án">
-    <div class="project-report-filter"><label class="filter-label">Từ ngày<input type="date" id="projectDashboardStartDate" value="${esc(range.from)}"></label><label class="filter-label">Đến ngày<input type="date" id="projectDashboardEndDate" value="${esc(range.to)}"></label><label class="filter-label">Đơn vị<select id="projectDashboardMetric"><option value="kg" ${metric === 'kg' ? 'selected' : ''}>Khối lượng · kg</option><option value="ton" ${metric === 'ton' ? 'selected' : ''}>Khối lượng · tấn</option></select></label><span class="source-chip">Nguồn: ${esc(sourceRows[0]?.source_file || 'QLDA')}</span></div>
+    <div class="project-report-filter">${dateFilterMarkup('projectDashboardStartDate', 'Từ ngày', range.from)}${dateFilterMarkup('projectDashboardEndDate', 'Đến ngày', range.to)}<label class="filter-label">Đơn vị<select id="projectDashboardMetric"><option value="kg" ${metric === 'kg' ? 'selected' : ''}>Khối lượng · kg</option><option value="ton" ${metric === 'ton' ? 'selected' : ''}>Khối lượng · tấn</option></select></label><span class="source-chip">Nguồn: ${esc(sourceRows[0]?.source_file || 'QLDA')}</span></div>
     <div class="stats-grid compact project-report-stats"><article class="stat-card"><div class="stat-top"><span>Tổng KL thiết kế</span><span class="stat-symbol">●</span></div><strong>${fmt(total, metric)}</strong><small>${metric === 'ton' ? 'tấn' : 'kg'} · toàn dự án</small></article><article class="stat-card green"><div class="stat-top"><span>Đã bàn giao</span><span class="stat-symbol">●</span></div><strong>${fmt(delivered, metric)}</strong><small>${fmt(percent, 'kg')}% khối lượng thiết kế</small></article><article class="stat-card gold"><div class="stat-top"><span>Khối lượng còn lại</span><span class="stat-symbol">●</span></div><strong>${fmt(remaining, metric)}</strong><small>${metric === 'ton' ? 'tấn' : 'kg'} · theo SL bàn giao</small></article><article class="stat-card blue"><div class="stat-top"><span>Cấu kiện có hoạt động</span><span class="stat-symbol">●</span></div><strong>${fmt(filteredRows.length)}</strong><small>${range.from || range.to ? 'Có ghi nhận trong khoảng ngày' : `Trên tổng ${fmt(sourceRows.length)} cấu kiện`}</small></article></div>
     ${emptyRange ? '<div class="notice error">Khoảng ngày không hợp lệ: ngày bắt đầu phải trước hoặc bằng ngày kết thúc.</div>' : ''}
     <div class="project-report-grid"><figure class="project-report-card project-report-cumulative"><figcaption><strong>Lũy kế khối lượng theo ngày và công đoạn</strong><span>${range.from || range.to ? `${range.from || 'Đầu kỳ'} – ${range.to || 'Hiện tại'}` : 'Toàn bộ ngày ghi nhận'} · rê hoặc tab vào điểm để xem số liệu</span></figcaption>${emptyRange ? '' : cumulativeChart(sourceRows, range, metric)}</figure><figure class="project-report-card"><figcaption><strong>Tiến độ khối lượng 5 công đoạn</strong><span>Khối lượng đã ghi nhận so với tổng thiết kế</span></figcaption>${stageCompletionChart(sourceRows, metric)}</figure><figure class="project-report-card"><figcaption><strong>Bàn giao và khối lượng còn lại theo tổ</strong><span>Tổng hợp hiện tại · không phụ thuộc khoảng ngày</span></figcaption>${teamBacklogChart(sourceRows, metric)}</figure><figure class="project-report-card"><figcaption><strong>Khối lượng bàn giao theo đơn vị nhận</strong><span>${range.from || range.to ? `${range.from || 'Đầu kỳ'} – ${range.to || 'Hiện tại'}` : 'Toàn bộ ngày ghi nhận'} · tối đa 10 đơn vị</span></figcaption>${emptyRange ? '' : receiverChart(sourceRows, range, metric)}</figure></div>
