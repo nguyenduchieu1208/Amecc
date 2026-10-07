@@ -17,7 +17,7 @@ The first run scans all eligible files in both folders. Changed workbooks are re
 
 Use `stopAmeccDriveSync` to remove the time trigger. It leaves the data already imported on the site unchanged. When the site's workbook parser changes, run `npm run drive-sync:bundle` before deploying Pages so the pinned parser asset and its integrity hashes stay aligned.
 
-When updating an existing Apps Script project after a parser/schema change, replace its `Code.gs` with this repository version and save it. Then run `refreshAmeccDriveData` once from the editor to re-import the existing workbooks; it clears only the saved sync/retry markers, keeps the Drive folders and trigger settings, and continues across later trigger runs if the first pass reaches its five-minute budget. This backfills newly parsed PL Remark notes and QLDA Shipment values into the site.
+When updating an existing Apps Script project after a parser/schema change, replace its `Code.gs` with this repository version and save it. Run `refreshAmeccQldaData` to re-import only project workbooks; it preserves PL/BTP sync markers and continues on later trigger runs if the first pass reaches its five-minute budget. Run `refreshAmeccDriveData` only when both PL/BTP and QLDA workbooks need a full re-import. This backfills newly parsed PL Remark notes and QLDA Shipment values into the site.
 
 The importer currently accepts `.xlsx` files up to 20 MiB. A Google Apps Script execution is limited to six minutes, so the initial sync of 13 PL and 21 QLDA files may continue on later one-minute triggers if it reaches its per-run time budget. Later updates normally send only changed files.
 

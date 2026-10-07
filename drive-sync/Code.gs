@@ -68,6 +68,24 @@ function refreshAmeccDriveData() {
   syncAmeccDrive();
 }
 
+/** Re-import only QLDA workbooks after QLDA fields or schema change. */
+function refreshAmeccQldaData() {
+  const properties = PropertiesService.getScriptProperties();
+  const folderId = String(properties.getProperty(AMECC_QLDA_FOLDER_PROPERTY) || AMECC_DEFAULT_QLDA_FOLDER_ID).trim();
+  const files = DriveApp.getFolderById(folderId).getFiles();
+  let queued = 0;
+  while (files.hasNext()) {
+    const file = files.next();
+    if (!/^[\w.-]+\.xlsx$/i.test(file.getName()) || /PL\.xlsx$/i.test(file.getName())) continue;
+    const id = file.getId();
+    properties.deleteProperty(AMECC_SYNCED_PREFIX + id);
+    properties.deleteProperty(AMECC_FAILED_PREFIX + id);
+    queued += 1;
+  }
+  console.log(`Queued ${queued} QLDA workbook(s) for re-import; PL/BTP sync markers were preserved.`);
+  syncAmeccDrive();
+}
+
 function assertSyncApiReady_(syncToken) {
   const response = UrlFetchApp.fetch(`${AMECC_SYNC.apiBaseUrl}/api/admin/drive-sync/health`, {
     method: 'get',
