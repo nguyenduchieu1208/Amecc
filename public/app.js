@@ -618,8 +618,10 @@ function projectsPage() {
     const index = pageIndex * pageSize + offset + 1;
     return `<tr><td class="project-row-number">${fmt(index)}</td><td class="project-shipment-cell">${fmt(row.shipment)}</td><td>${fmt(row.item)}</td><td><span class="project-team-badge">${fmt(row.allocation)}</span></td><td class="project-part-cell"><button type="button" class="project-part-link" data-project-detail-row="${esc(row.source_row)}">${fmt(row.part_no || row.item_id || '—')} <span aria-hidden="true">↗</span></button></td><td>${fmt(row.drawing)}</td><td><strong>${fmt(row.size)}</strong>${row.profile ? `<small>${fmt(row.profile)}</small>` : ''}</td><td class="project-number">${fmt(row.quantity)}</td><td class="project-number">${fmt(row.unit_weight)}</td><td class="project-number project-total-weight">${fmt(row.total_weight)}</td><td><span class="status-pill ${status.tone}">${esc(status.label)}</span></td>${projectStages.map((stage) => `<td class="project-stage-column ${stage.tone}">${projectStageCell(row, stage)}</td>`).join('')}<td class="project-action-column"><button type="button" class="project-detail-button" data-project-detail-row="${esc(row.source_row)}" aria-label="Xem chi tiết cấu kiện ${esc(row.part_no || '')}" title="Xem chi tiết">◎</button></td></tr>`;
   }).join('');
+  const projectFilterMarkup = `<label class="search-box project-catalog-search">${icon('search')}<input id="projectSearch" type="search" placeholder="Tìm mã cấu kiện, bản vẽ, hạng mục…" value="${esc(query)}"></label><label class="filter-label project-shipment-filter">Shipment<select id="projectShipmentFilter"><option value="">Tất cả shipment${shipments.length ? ` (${shipments.length})` : ''}</option>${shipments.map((value) => `<option value="${esc(value)}" ${state.projectShipmentFilter === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label><label class="filter-label project-item-filter">Hạng mục<select id="projectItemFilter"><option value="">Tất cả hạng mục${items.length ? ` (${items.length})` : ''}</option>${items.map((value) => `<option value="${esc(value)}" ${state.projectItemFilter === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label><label class="filter-label project-team-filter">Tổ<select id="projectTeamFilter"><option value="">Tất cả tổ${teams.length ? ` (${teams.length})` : ''}</option>${teams.map((value) => `<option value="${esc(value)}" ${state.projectTeamFilter === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label><label class="filter-label project-status-filter">Trạng thái<select id="projectStatusFilter"><option value="" ${!state.projectStatusFilter ? 'selected' : ''}>Tất cả trạng thái</option><option value="handover" ${state.projectStatusFilter === 'handover' ? 'selected' : ''}>Đã bàn giao</option><option value="active" ${state.projectStatusFilter === 'active' ? 'selected' : ''}>Đang thực hiện</option><option value="not-started" ${state.projectStatusFilter === 'not-started' ? 'selected' : ''}>Chưa bắt đầu</option></select></label>`;
+  const projectExportMarkup = `<div class="project-export-actions"><button class="button primary" id="exportProjectWorkbook" type="button" ${rows.length ? '' : 'disabled'}>${icon('download')}<span>Xuất Excel đã lọc cột</span></button><input id="projectExportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden><small>Chọn file QLDA gốc để giữ màu và định dạng.</small><span id="projectExportMessage" class="project-export-message" aria-live="polite"></span></div>`;
   return `${heading('PROJECT DELIVERY · QLDA','Quản lý dự án','Tra cứu cấu kiện và xem tiến độ 5 công đoạn trong một bảng tổng hợp.',projectSelect('progress'))}
-    <div class="project-catalog-toolbar project-progress-toolbar"><label class="search-box project-catalog-search">${icon('search')}<input id="projectSearch" type="search" placeholder="Tìm mã cấu kiện, bản vẽ, hạng mục…" value="${esc(query)}"></label><label class="filter-label project-shipment-filter">Shipment<select id="projectShipmentFilter"><option value="">Tất cả shipment${shipments.length ? ` (${shipments.length})` : ''}</option>${shipments.map((value) => `<option value="${esc(value)}" ${state.projectShipmentFilter === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label><label class="filter-label project-item-filter">Hạng mục<select id="projectItemFilter"><option value="">Tất cả hạng mục${items.length ? ` (${items.length})` : ''}</option>${items.map((value) => `<option value="${esc(value)}" ${value === state.projectItemFilter ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label><label class="filter-label project-team-filter">Tổ<select id="projectTeamFilter"><option value="">Tất cả tổ${teams.length ? ` (${teams.length})` : ''}</option>${teams.map((value) => `<option value="${esc(value)}" ${value === state.projectTeamFilter ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label><label class="filter-label project-status-filter">Trạng thái<select id="projectStatusFilter"><option value="" ${!state.projectStatusFilter ? 'selected' : ''}>Tất cả trạng thái</option><option value="handover" ${state.projectStatusFilter === 'handover' ? 'selected' : ''}>Đã bàn giao</option><option value="active" ${state.projectStatusFilter === 'active' ? 'selected' : ''}>Đang thực hiện</option><option value="not-started" ${state.projectStatusFilter === 'not-started' ? 'selected' : ''}>Chưa bắt đầu</option></select></label><div class="project-export-actions"><button class="button primary" id="exportProjectWorkbook" type="button" ${rows.length ? '' : 'disabled'}>${icon('download')}<span>Xuất Excel đã lọc cột</span></button><input id="projectExportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden><small>Chọn file QLDA gốc để giữ màu và định dạng.</small><span id="projectExportMessage" class="project-export-message" aria-live="polite"></span></div></div>
+    <div class="project-progress-controls"><section class="panel project-progress-filter-panel"><div class="project-progress-toolbar">${projectFilterMarkup}</div></section>${projectExportMarkup}</div>
     ${shipmentDataMissing ? '<div class="notice project-shipment-sync-notice">Workbook QLDA trên Drive có cột Shipment nhưng dữ liệu đã lưu chưa có cột này. Sau khi cập nhật Apps Script, chạy <code>refreshAmeccQldaData()</code> một lần để nạp lại các file QLDA.</div>' : ''}
     <div class="stats-grid compact project-progress-stats">${statCard('Cấu kiện',filtered.length,'Theo bộ lọc hiện tại')}${statCard('Đã bàn giao',completed,'Hoàn thành công đoạn 5','green')}${statCard('Đang thực hiện',active,'Đã có ghi nhận sản xuất','gold')}${statCard('Tổng khối lượng · kg',filtered.reduce((sum, row) => sum + (Number(row.total_weight) || 0), 0),'Theo cột Tổng KL')}</div>
     <div class="section-heading project-progress-heading"><div><span class="eyebrow">PROJECT PROGRESS</span><h3>Tiến độ cấu kiện <span class="muted-count">${filtered.length.toLocaleString('vi-VN')}</span></h3></div><span class="count-chip">${filtered.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, filtered.length)} / ${filtered.length.toLocaleString('vi-VN')}` : '0 cấu kiện'}</span></div>
@@ -664,6 +666,49 @@ function bindPlFileDeleteButtons() {
 }
 function bindPage() {
   const pageRoot = document.querySelector('#page');
+  document.querySelectorAll('.project-table-frame').forEach((frame) => {
+    if (frame.dataset.dragScrollBound) return;
+    frame.dataset.dragScrollBound = 'true';
+    let drag = null;
+    let suppressClick = false;
+    frame.addEventListener('pointerdown', (event) => {
+      if (event.pointerType !== 'mouse' || event.button !== 0 || event.target.closest('button,a,input,select,textarea,[contenteditable="true"]')) return;
+      drag = { pointerId:event.pointerId, x:event.clientX, y:event.clientY, left:frame.scrollLeft, top:frame.scrollTop, moved:false };
+    });
+    frame.addEventListener('pointermove', (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        frame.classList.add('is-dragging');
+        try { frame.setPointerCapture(event.pointerId); } catch {}
+      }
+      event.preventDefault();
+      frame.scrollLeft = drag.left - dx;
+      frame.scrollTop = drag.top - dy;
+    });
+    const endDrag = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      suppressClick = drag.moved;
+      if (frame.hasPointerCapture?.(event.pointerId)) frame.releasePointerCapture(event.pointerId);
+      drag = null;
+      frame.classList.remove('is-dragging');
+    };
+    frame.addEventListener('pointerup', endDrag);
+    frame.addEventListener('pointercancel', endDrag);
+    frame.addEventListener('click', (event) => {
+      if (!suppressClick) return;
+      suppressClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+    frame.addEventListener('lostpointercapture', () => {
+      drag = null;
+      frame.classList.remove('is-dragging');
+    });
+  });
   if (pageRoot && !pageRoot.dataset.chartTooltipDismissBound) {
     pageRoot.dataset.chartTooltipDismissBound = 'true';
     pageRoot.addEventListener('pointerdown', (event) => {
