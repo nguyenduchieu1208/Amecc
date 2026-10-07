@@ -652,22 +652,41 @@
   .project-report-card:fullscreen:not(.project-report-btp) .project-stage-report-row { grid-template-columns:minmax(0,1fr) 44px; }
 }
 
-/* Mobile project lookup keeps search visible and tucks the secondary filters behind one button. */
+/* Keep project filters in one BTP-style card on desktop and collapsible on phones. */
+.project-progress-controls { display:block; margin:-8px 0 15px; }
+.project-progress-filter-panel { min-width:0; margin:0; padding:12px; }
+.project-progress-toolbar { display:grid; grid-template-columns:minmax(220px,1.55fr) repeat(4,minmax(115px,.82fr)) minmax(175px,.95fr); grid-template-areas:"search shipment item team status export"; grid-template-rows:auto; align-items:end; gap:10px; }
 .project-mobile-search-row,.project-mobile-extra-filters { display:contents; }
-.mobile-project-filter-toggle { display:none; }
+.project-progress-toolbar .project-mobile-search-row .project-catalog-search { grid-area:search; }
+.project-progress-toolbar .project-shipment-filter { grid-area:shipment; }
+.project-progress-toolbar .project-item-filter { grid-area:item; }
+.project-progress-toolbar .project-team-filter { grid-area:team; }
+.project-progress-toolbar .project-status-filter { grid-area:status; }
+.project-progress-toolbar .project-export-actions { grid-area:export; grid-column:auto; grid-row:auto; align-self:end; justify-self:stretch; width:auto; }
+.project-mobile-filter-toggle { display:none; }
+@media(min-width:701px) and (max-width:1250px) {
+  .project-progress-controls { margin:-8px 0 15px; }
+  .project-progress-filter-panel { padding:12px; }
+  .project-progress-toolbar { grid-template-columns:repeat(4,minmax(0,1fr)); grid-template-areas:"search search shipment item" "team status export export"; gap:9px; }
+  .project-progress-toolbar .project-mobile-search-row .project-catalog-search { min-height:42px; }
+  .project-progress-toolbar .project-export-actions { grid-area:export; }
+}
 @media(max-width:700px) {
+  .project-progress-controls { display:block; gap:8px; margin:-5px 0 13px; }
   .project-progress-filter-panel { position:sticky; top:72px; z-index:11; padding:9px; }
-  .project-progress-toolbar { display:block; }
-  .project-mobile-search-row { display:flex; align-items:stretch; gap:8px; }
+  .project-progress-toolbar { display:grid; grid-template-columns:minmax(0,1fr); grid-template-areas:"search" "filters"; gap:0; }
+  .project-mobile-search-row { grid-area:search; display:flex; align-items:stretch; gap:8px; }
   .project-mobile-search-row .project-catalog-search { flex:1; min-width:0; max-width:none; height:44px; }
   .project-mobile-search-row .project-catalog-search input { min-width:0; font-size:14px; }
   .mobile-project-filter-toggle { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:94px; min-height:44px; padding:0 10px; border:1px solid var(--line); background:var(--soft); color:var(--ink); font-size:11px; }
   .mobile-project-filter-toggle .mobile-filter-chevron { transition:transform .2s; }
   .mobile-expanded .mobile-project-filter-toggle .mobile-filter-chevron { transform:rotate(180deg); }
-  .project-mobile-extra-filters { display:none; }
+  .project-mobile-extra-filters { grid-area:filters; display:none; }
   .mobile-expanded .project-mobile-extra-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 8px; padding-top:9px; }
-  .project-mobile-extra-filters>.filter-label { display:grid; min-width:0; gap:5px; font-size:10px; white-space:normal; }
+  .project-mobile-extra-filters>.filter-label { display:grid; grid-area:auto; min-width:0; gap:5px; font-size:10px; white-space:normal; }
   .project-mobile-extra-filters select { width:100%; min-width:0; height:44px; min-height:44px; padding:0 9px; font-size:14px; }
+  .project-mobile-extra-filters .project-export-actions { grid-column:1/-1; grid-area:auto; align-self:stretch; justify-self:stretch; width:100%; }
+  .project-mobile-extra-filters .project-export-actions>.button { width:100%; min-height:44px; justify-content:center; }
   .project-table-frame { max-height:68dvh; overflow:auto; overflow-x:auto; -webkit-overflow-scrolling:touch; overscroll-behavior-x:contain; touch-action:pan-x pan-y; }
   .project-progress-table { min-width:1850px; }
   .project-progress-table td.project-action-column { position:static!important; right:auto; z-index:1; box-shadow:none; }
