@@ -494,6 +494,25 @@ function bindBtpPrintActions(pageRoot) {
       if (table) table.hidden = !expanded;
       return;
     }
+    const toggleAll = event.target.closest?.('#toggleAllBtpGroups');
+    if (toggleAll) {
+      const expand = toggleAll.getAttribute('aria-pressed') !== 'true';
+      const groupKeys = [...state.materialPrintAvailableGroups.keys()];
+      groupKeys.forEach((key) => {
+        if (expand) state.materialExpandedGroups.add(key);
+        else state.materialExpandedGroups.delete(key);
+      });
+      pageRoot.querySelectorAll('.bom-btp-group[data-print-group]').forEach((card) => {
+        const summary = card.querySelector('[data-toggle-btp-group]');
+        const table = card.querySelector('.bom-btp-table-wrap');
+        card.classList.toggle('is-expanded', expand);
+        summary?.setAttribute('aria-expanded', String(expand));
+        if (table) table.hidden = !expand;
+      });
+      toggleAll.setAttribute('aria-pressed', String(expand));
+      toggleAll.textContent = expand ? 'Thu gọn tất cả thẻ' : 'Mở tất cả thẻ';
+      return;
+    }
     const singlePrint = event.target.closest?.('[data-print-btp-single]');
     if (singlePrint) {
       event.preventDefault();
@@ -589,6 +608,7 @@ function materialsAuditPage() {
   const unmatchedCount = visibleRows.filter((row) => row.bomStatus !== 'matched' || row.qldaStatus !== 'matched').length;
   const pageSize = 100;
   const allGroups = auditBomGroups(visibleRows, contextRows, search);
+  const allGroupsExpanded = allGroups.length > 0 && allGroups.every((group) => state.materialExpandedGroups.has(group.key));
   const pageCount = Math.max(1, Math.ceil(allGroups.length / pageSize));
   state.materialPageIndex = Math.min(Math.max(0, state.materialPageIndex), pageCount - 1);
   const pageIndex = state.materialPageIndex;
@@ -624,7 +644,7 @@ function materialsAuditPage() {
       <div class="audit-control-footer"><span class="source-chip">Nguồn BOM/BTP: ${esc(filename)} · QLDA: ${esc(qldaFilename)} · Tên dự án lấy từ tên file</span><span id="btpExportMessage" class="btp-export-message" aria-live="polite"></span></div>
     </section>
     <div class="stats-grid compact audit-stats">${statCard('Dòng đối chiếu',visibleRows.length,'Theo sheet, ngày, trạng thái và từ khóa')}${statCard('Dòng BTP còn thiếu',shortageCount,'Được đưa vào List thiếu','red')}${statCard('BOM chưa có BTP',visibleRows.filter((row) => row.kind === 'bom-only').length,'Kiểm tra phần chưa được lập BTP','gold')}${statCard('Liên kết cần xem',unmatchedCount,'BOM hoặc QLDA chưa khớp','blue')}</div>
-    <div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3><span class="count-chip">${allGroups.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, allGroups.length)} / ${fmt(allGroups.length)} cấu kiện` : '0 cấu kiện'}</span></div><div class="btp-print-selection-actions"><label class="btp-print-page-select"><input id="selectVisibleBtpForPrint" type="checkbox" ${allPageGroupsSelected ? 'checked' : ''}><span>Chọn trang</span></label><span id="selectedBtpPrintCount" class="btp-print-selected-count">${fmt(printSelectionCount)} thẻ đã chọn</span><button class="button primary" id="printSelectedBtp" type="button" ${printSelectionCount ? '' : 'disabled'}>In PDF đã chọn</button><button class="button btp-print-clear" id="clearBtpPrintSelection" type="button" ${printSelectionCount ? '' : 'hidden'}>Bỏ chọn</button></div></div>
+<div class="section-heading audit-table-heading"><div><span class="eyebrow">BTP · BÁN THÀNH PHẨM</span><h3>BTP trong BOM <span class="muted-count">${fmt(visibleRows.length)}</span></h3><span class="count-chip">${allGroups.length ? `${pageIndex * pageSize + 1}–${Math.min((pageIndex + 1) * pageSize, allGroups.length)} / ${fmt(allGroups.length)} cấu kiện` : '0 cấu kiện'}</span></div><div class="btp-print-selection-actions"><button class="button btp-expand-all" id="toggleAllBtpGroups" type="button" aria-pressed="${allGroupsExpanded}" ${allGroups.length ? '' : 'disabled'}>${allGroupsExpanded ? 'Thu gọn tất cả thẻ' : 'Mở tất cả thẻ'}</button><label class="btp-print-page-select"><input id="selectVisibleBtpForPrint" type="checkbox" ${allPageGroupsSelected ? 'checked' : ''}><span>Chọn trang</span></label><span id="selectedBtpPrintCount" class="btp-print-selected-count">${fmt(printSelectionCount)} thẻ đã chọn</span><button class="button primary" id="printSelectedBtp" type="button" ${printSelectionCount ? '' : 'disabled'}>In PDF đã chọn</button><button class="button btp-print-clear" id="clearBtpPrintSelection" type="button" ${printSelectionCount ? '' : 'hidden'}>Bỏ chọn</button></div></div>
     <div class="bom-btp-groups">${pageGroups.map(auditBomGroupMarkup).join('') || '<div class="empty-state"><strong>Không có dòng phù hợp</strong><p>Hãy đổi bộ lọc hoặc chọn dự án có dữ liệu.</p></div>'}</div>
     <div class="btp-pagination"><span>${fmt(allGroups.length)} cấu kiện · ${fmt(visibleRows.length)} dòng BTP phù hợp</span><div><button class="button" id="auditPrevPage" type="button" ${pageIndex === 0 ? 'disabled' : ''}>Trước</button><span>Trang ${pageIndex + 1} / ${pageCount}</span><button class="button" id="auditNextPage" type="button" ${pageIndex >= pageCount - 1 ? 'disabled' : ''}>Sau</button></div></div>
     ${filteredBtp.filter((row) => getBtpShortageQuantity(row) > 0 && getBtpShortageWeight(row) === null).length ? '<p id="auditShortageNote" class="shortage-report-note">Một số dòng thiếu chưa có U.Weight; khối lượng thiếu tương ứng chưa được tính.</p>' : ''}`;

@@ -30,7 +30,7 @@
 .btp-print-selection-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
 .btp-print-selection-actions .button { min-height:34px; padding:7px 10px; white-space:nowrap; }
 .btp-print-selected-count { color:var(--muted); font-size:10px; font-weight:600; white-space:nowrap; }
-.btp-print-clear { border:1px solid var(--line); background:var(--surface); color:var(--ink); }
+.btp-print-clear,.btp-expand-all { border:1px solid var(--line); background:var(--surface); color:var(--ink); }
 #btpPrintDocument { display:none; }
 @media(max-width:820px) {
   .bom-btp-group-header { grid-template-columns:minmax(0,1fr); }
