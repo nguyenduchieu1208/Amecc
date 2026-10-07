@@ -139,7 +139,7 @@
 @media(max-width:580px) { .project-filter-toolbar { grid-template-columns:minmax(0,1fr); gap:9px; } .project-filter-toolbar .filter-label { justify-content:space-between; } .project-filter-toolbar .filter-label select { min-width:0; } .project-filter-toolbar .source-chip { grid-column:auto; max-width:100%; } }
 
 /* QLDA assembly overview and stage detail panel */
-.project-catalog-toolbar { display:grid; grid-template-columns:minmax(260px,1fr) minmax(175px,215px) minmax(0,auto) minmax(200px,auto); align-items:center; }
+.project-catalog-toolbar { display:grid; grid-template-columns:minmax(240px,1.45fr) repeat(4,minmax(120px,.7fr)) minmax(0,auto) minmax(200px,auto); align-items:center; gap:9px; }
 .project-catalog-toolbar .project-catalog-search { width:100%; }
 .project-catalog-toolbar .source-chip { max-width:100%; white-space:normal; }
 .project-status-filter { display:grid; gap:5px; white-space:normal; }
@@ -152,7 +152,7 @@
 .project-progress-table th { position:sticky; top:0; z-index:2; height:44px; background:var(--soft); color:var(--muted); font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.15px; }
 .project-progress-table th:first-child,.project-progress-table td:first-child { position:sticky; left:0; z-index:3; width:52px; min-width:52px; max-width:52px; text-align:center; background:var(--surface); }
 .project-progress-table th:first-child { z-index:5; background:var(--soft); }
-.project-progress-table th:nth-child(2),.project-progress-table td:nth-child(2) { position:sticky; left:52px; z-index:3; width:156px; min-width:156px; max-width:156px; background:var(--surface); }
+.project-progress-table th:nth-child(2),.project-progress-table td:nth-child(2) { position:sticky; left:52px; z-index:3; width:124px; min-width:124px; max-width:124px; background:var(--surface); }
 .project-progress-table th:nth-child(2) { z-index:5; background:var(--soft); }
 .project-progress-table tbody tr:hover td { background:var(--soft); }
 .project-progress-table tbody tr:hover td:first-child,.project-progress-table tbody tr:hover td:nth-child(2) { background:var(--soft); }
@@ -162,10 +162,12 @@
 .project-part-link { max-width:100%; overflow:hidden; padding:0; border:0; background:transparent; color:#185fc2; font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace; text-overflow:ellipsis; cursor:pointer; }
 .project-part-link span { font:700 12px 'DM Sans',Arial,sans-serif; }
 .project-part-link:hover { text-decoration:underline; }
-.project-progress-table td:nth-child(3),.project-progress-table td:nth-child(4) { max-width:250px; overflow:hidden; text-overflow:ellipsis; }
+.project-progress-table td:nth-child(3),.project-progress-table td:nth-child(6) { max-width:250px; overflow:hidden; text-overflow:ellipsis; }
 .project-team-badge { display:inline-flex; align-items:center; justify-content:center; min-width:34px; min-height:24px; padding:3px 7px; border-radius:6px; background:var(--soft); color:var(--ink); font-weight:800; }
-.project-progress-table td:nth-child(6) { min-width:155px; }
-.project-progress-table td:nth-child(6) small { display:block; max-width:160px; margin-top:3px; overflow:hidden; color:var(--muted); text-overflow:ellipsis; }
+.project-progress-table td:nth-child(5) { min-width:160px; }
+.project-progress-table td:nth-child(5) .project-part-link { max-width:155px; }
+.project-progress-table td:nth-child(7) { min-width:155px; }
+.project-progress-table td:nth-child(7) small { display:block; max-width:160px; margin-top:3px; overflow:hidden; color:var(--muted); text-overflow:ellipsis; }
 .project-number { text-align:right!important; font-variant-numeric:tabular-nums; }
 .project-total-weight { color:#214fa9; font-weight:800; }
 .project-stage-column { min-width:120px; text-align:center!important; }
@@ -247,7 +249,7 @@
   .project-progress-table th:first-child,.project-progress-table td:first-child { width:42px; min-width:42px; max-width:42px; }
   .project-progress-table th:nth-child(2),.project-progress-table td:nth-child(2) { left:42px; width:142px; min-width:142px; max-width:142px; }
   .project-part-link { font-size:10px; }
-  .project-progress-table td:nth-child(3),.project-progress-table td:nth-child(4) { max-width:180px; }
+  .project-progress-table td:nth-child(3),.project-progress-table td:nth-child(6) { max-width:180px; }
   .project-assembly-dialog { width:calc(100vw - 16px); max-height:94dvh; border-radius:14px; }
   .project-dialog-header { min-height:94px; gap:10px; padding:15px; }
   .project-dialog-symbol { width:42px; height:42px; border-radius:12px; font-size:24px; }
@@ -287,7 +289,7 @@
 
 /* Project reporting dashboard: all data surfaces and chart colors follow the selected workspace theme. */
 .project-dashboard { min-width:0; }
-.project-report-filter { display:grid; grid-template-columns:minmax(150px,1fr) minmax(150px,1fr) minmax(160px,.8fr) minmax(0,1.2fr); align-items:end; gap:10px; margin:-8px 0 14px; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:var(--shadow); }
+.project-report-filter { display:grid; grid-template-columns:minmax(180px,1.15fr) minmax(150px,1fr) minmax(150px,1fr) minmax(160px,.8fr) minmax(0,1.15fr); align-items:end; gap:10px; margin:-8px 0 14px; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:var(--shadow); }
 .project-report-filter .filter-label { display:grid; gap:5px; white-space:normal; }
 .project-report-filter .filter-label input,.project-report-filter .filter-label select { width:100%; min-width:0; }
 .project-report-filter .source-chip { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -296,9 +298,21 @@
 .project-report-stats .stat-card strong { font-variant-numeric:tabular-nums; }
 .project-report-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; }
 .project-report-card { min-width:0; min-height:300px; margin:0; padding:15px; overflow:hidden; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:var(--shadow); }
-.project-report-card figcaption { display:grid; gap:5px; margin:0 0 13px; }
+.project-report-card figcaption { margin:0 0 13px; }
+.project-report-caption { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.project-report-caption>div { display:grid; gap:5px; min-width:0; }
 .project-report-card figcaption strong { color:var(--ink); font:700 13px Manrope,sans-serif; }
 .project-report-card figcaption span { color:var(--muted); font-size:10px; line-height:1.5; }
+.project-chart-expand { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:6px; min-height:30px; padding:5px 8px; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--muted); font:600 10px Manrope,sans-serif; cursor:pointer; }
+.project-chart-expand:hover,.project-chart-expand:focus-visible { border-color:var(--blue); color:var(--blue); outline:none; }
+.project-chart-expand svg { width:14px; height:14px; }
+.project-chart-notice { min-height:0; margin:0; color:var(--status-danger); font-size:10px; }
+.project-chart-notice:empty { display:none; }
+.project-report-card:fullscreen { width:100vw; height:100vh; min-height:100vh; padding:24px; overflow:auto; border:0; border-radius:0; background:var(--surface); box-shadow:none; }
+.project-report-card:fullscreen .project-report-caption>div { gap:8px; }
+.project-report-card:fullscreen .project-report-card figcaption strong,.project-report-card:fullscreen figcaption strong { font-size:18px; }
+.project-report-card:fullscreen .project-dashboard-svg { height:min(70vh,720px); }
+.project-report-card:fullscreen .project-chart-expand { position:sticky; top:0; }
 .project-chart-legend,.project-team-legend { display:flex; flex-wrap:wrap; gap:8px 14px; margin:0 0 6px; color:var(--muted); font-size:9px; }
 .project-chart-legend span,.project-team-legend span { display:inline-flex; align-items:center; gap:5px; }
 .project-chart-legend i,.project-team-legend i { width:9px; height:9px; flex:none; border-radius:50%; background:var(--chart-accent); }
@@ -343,5 +357,5 @@
 .project-receiver-track i { background:var(--report-delivered); }
 .project-report-note { margin:13px 1px; padding:11px 13px; border:1px solid color-mix(in srgb,var(--status-info) 22%,var(--line)); border-radius:8px; background:var(--status-info-bg); color:var(--muted); font-size:10px; line-height:1.65; }
 .project-report-note b { color:var(--status-info); }
-@media(max-width:1000px) { .project-report-filter { grid-template-columns:repeat(2,minmax(0,1fr)); } .project-report-filter .source-chip { align-self:start; } .project-report-grid { grid-template-columns:minmax(0,1fr); } }
-@media(max-width:580px) { .project-report-filter { grid-template-columns:minmax(0,1fr); gap:9px; margin:-5px 0 11px; padding:10px; } .project-report-filter .filter-label input:not(.date-native-picker),.project-report-filter .filter-label select { min-height:42px; font-size:16px; } .date-entry-calendar { height:42px; } .project-report-filter .source-chip { white-space:normal; overflow-wrap:anywhere; } .project-report-card { min-height:265px; padding:11px; } .project-report-card figcaption strong { font-size:12px; } .project-dashboard-svg { height:245px; } .project-stage-report-row { grid-template-columns:minmax(95px,1fr) minmax(65px,1.2fr) 42px; gap:7px; } .project-stage-report-row span { font-size:8px; } .project-team-report-row { grid-template-columns:58px minmax(60px,1fr) 78px; gap:6px; } .project-receiver-row { grid-template-columns:minmax(90px,1fr) minmax(55px,.8fr) 68px; gap:7px; } }
+@media(max-width:1000px) { .project-catalog-toolbar { grid-template-columns:repeat(2,minmax(0,1fr)); } .project-catalog-toolbar .project-catalog-search,.project-catalog-toolbar>.source-chip,.project-export-actions { grid-column:1/-1; } .project-report-filter { grid-template-columns:repeat(2,minmax(0,1fr)); } .project-report-filter .source-chip { align-self:start; } .project-report-grid { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:580px) { .project-catalog-toolbar { grid-template-columns:minmax(0,1fr); gap:8px; } .project-catalog-toolbar .project-catalog-search,.project-catalog-toolbar>.source-chip,.project-export-actions { grid-column:auto; } .project-progress-table { min-width:1900px; } .project-progress-table th:first-child,.project-progress-table td:first-child { width:42px; min-width:42px; max-width:42px; } .project-progress-table th:nth-child(2),.project-progress-table td:nth-child(2) { left:42px; width:112px; min-width:112px; max-width:112px; } .project-report-filter { grid-template-columns:minmax(0,1fr); gap:9px; margin:-5px 0 11px; padding:10px; } .project-report-filter .filter-label input:not(.date-native-picker),.project-report-filter .filter-label select,.project-report-filter .sheet-multi-select>summary { min-height:42px; font-size:16px; } .date-entry-calendar { height:42px; } .project-report-filter .source-chip { white-space:normal; overflow-wrap:anywhere; } .project-report-card { min-height:265px; padding:11px; } .project-report-caption { gap:7px; } .project-report-card figcaption strong { font-size:12px; } .project-chart-expand { min-height:28px; padding:4px 6px; } .project-chart-expand span { font-size:9px; } .project-dashboard-svg { height:245px; } .project-stage-report-row { grid-template-columns:minmax(95px,1fr) minmax(65px,1.2fr) 42px; gap:7px; } .project-stage-report-row span { font-size:8px; } .project-team-report-row { grid-template-columns:58px minmax(60px,1fr) 78px; gap:6px; } .project-receiver-row { grid-template-columns:minmax(90px,1fr) minmax(55px,.8fr) 68px; gap:7px; } .project-report-card:fullscreen { padding:13px; } }

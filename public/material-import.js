@@ -12,13 +12,14 @@ const MATERIAL_HEADER_ALIASES = {
   drawing: ['drawingnumber', 'drawingno'],
   assembly: ['assemblyno', 'assemblynumber'],
   description: ['description'],
-  part_no: ['partno', 'partnumber', 'detailno'],
+  part_no: ['partno', 'partno1', 'partnumber', 'detailno', 'detailcode', 'componentno', 'componentnumber'],
   size: ['size'],
   quantity: ['tqty', 'totalqty', 'quantity', 'tquantity'],
   weight: ['tweight', 'totalweight'],
   scope: ['scopeofsteelwork', 'scopeofwork', 'scope', 'phamvicongviec'],
   received: ['danhan', 'received', 'receivedqty'],
   remaining: ['conthieu', 'remaining', 'balance'],
+  note: ['note', 'remark', 'remarks', 'plremark', 'comment', 'comments', 'ghichu'],
 };
 
 export const BTP_COLUMNS = [
@@ -47,6 +48,67 @@ const BTP_HEADER_ALIASES = {
 
 function normalizeHeader(value) {
   return typeof value === 'string' ? value.replace(/[đĐ]/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+}
+
+function remarkKey(value) {
+  return normalizeHeader(String(value ?? '')).toUpperCase();
+}
+
+function remarkLookup(workbook, xlsx) {
+  const result = new Map();
+  const identityAliases = {
+    part_no: ['partno', 'partno1', 'partnumber', 'detailno', 'detailcode', 'componentno', 'componentnumber', 'mabtpchitiet'],
+    drawing: ['drawingnumber', 'drawingno', 'drawing'],
+    assembly: ['assemblyno', 'assemblynumber', 'groupid', 'groupshipment'],
+    description: ['description', 'partname', 'partdescription', 'detailname', 'tenchitiet'],
+  };
+  const noteAliases = ['remark', 'remarks', 'plremark', 'note', 'comment', 'comments', 'ghichu', 'ghichupl'];
+  for (const sheetName of workbook.SheetNames) {
+    if (normalizeHeader(sheetName) !== 'plremark') continue;
+    const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      header:1, raw:true, cellDates:false, defval:null, blankrows:true,
+    });
+    let headerIndex = -1;
+    let identityColumns = {};
+    let noteColumn = -1;
+    for (let rowIndex = 0; rowIndex < Math.min(rows.length, 35); rowIndex += 1) {
+      const header = rows[rowIndex].map(normalizeHeader);
+      const identities = {};
+      for (const [field, aliases] of Object.entries(identityAliases)) {
+        const column = header.findIndex((value) => aliases.includes(value));
+        if (column !== -1) identities[field] = column;
+      }
+      const note = header.findIndex((value) => noteAliases.includes(value)
+        || value.startsWith('remark') || value.startsWith('plremark') || value.startsWith('note') || value.startsWith('ghichu'));
+      if (note !== -1 && Object.keys(identities).length) {
+        headerIndex = rowIndex;
+        identityColumns = identities;
+        noteColumn = note;
+        break;
+      }
+    }
+    if (headerIndex === -1) continue;
+    for (const row of rows.slice(headerIndex + 1)) {
+      const note = normalizeValue(row[noteColumn]);
+      if (note === null || note === undefined || String(note).trim() === '') continue;
+      for (const column of Object.values(identityColumns)) {
+        const identity = remarkKey(row[column]);
+        if (!identity) continue;
+        const existing = result.get(identity) || [];
+        if (!existing.includes(String(note).trim())) existing.push(String(note).trim());
+        result.set(identity, existing);
+      }
+    }
+  }
+  return result;
+}
+
+function findMaterialRemark(fields, remarks) {
+  for (const field of ['part_no', 'drawing', 'assembly', 'description']) {
+    const notes = remarks.get(remarkKey(fields[field]));
+    if (notes?.length) return notes.join(' | ');
+  }
+  return null;
 }
 
 export function projectCodeFromFilename(filename, category) {
@@ -301,9 +363,11 @@ function isColumnReferenceRow(raw, fields, rowIndex, headerIndex, symbolColumn) 
 export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
   const records = [];
   const btpRecords = [];
+  const remarks = remarkLookup(workbook, xlsx);
   for (const sheetName of workbook.SheetNames) {
     const name = sheetName.toLowerCase();
     if (isPurchasingMaterialSheet(sheetName)) continue;
+    if (normalizeHeader(sheetName) === 'plremark') continue;
     const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], {
       // Keep Excel dates as serials so receipt-day parsing is independent of the browser timezone.
       header: 1, raw: true, cellDates: false, defval: null, blankrows: true,
@@ -344,6 +408,7 @@ export function parseMaterialWorkbook(workbook, filename, projectCode, xlsx) {
       fields.delivery_date = receiptDates || (sourceColumns.deliveryDate
         ? normalizeMaterialDate(raw[sourceColumns.deliveryDate - 1], xlsx)
         : null);
+      fields.note = fields.note || findMaterialRemark(fields, remarks);
       if (isColumnReferenceRow(raw, fields, rowIndex, headerIndex, symbolColumn)) continue;
       if (![fields.drawing, fields.assembly, fields.part_no, fields.description]
         .some((item) => item !== null && item !== undefined)) continue;

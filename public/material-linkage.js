@@ -179,6 +179,7 @@ export function buildMaterialAuditRows({ materialRows = [], btpRows = [], progre
       bom_source_sheet:linkage.bomLine?.source_sheet || linkage.parent?.source_sheet || '',
       bomParent:linkage.parent,
       bomLine:linkage.bomLine,
+      bomNote:linkage.bomLine?.note || linkage.parent?.note || '',
       btp:btpRow,
       progress:qlda.rows,
       bomStatus:linkage.bomStatus,
@@ -200,6 +201,7 @@ export function buildMaterialAuditRows({ materialRows = [], btpRows = [], progre
       bom_source_sheet:bomLine.source_sheet || '',
       bomParent:parent,
       bomLine,
+      bomNote:bomLine.note || parent?.note || '',
       btp:null,
       progress:qlda.rows,
       bomStatus:'no-btp',
@@ -214,6 +216,7 @@ export function materialAuditRowSearchText(row) {
   const values = [
     row?.source_file, row?.source_sheet, row?.bomParent?.assembly, row?.bomParent?.drawing,
     row?.bomLine?.part_no, row?.bomLine?.description, row?.bomLine?.size,
+    row?.bomLine?.note, row?.bomParent?.note, row?.bomNote,
     row?.btp?.part_no, row?.btp?.material_type, row?.btp?.description, row?.btp?.material,
     row?.btp?.unit, row?.btp?.size, row?.btp?.note,
     ...(Array.isArray(row?.progress) ? row.progress.flatMap((item) => [item.part_no, item.drawing, item.item, item.receiver]) : []),

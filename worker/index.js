@@ -4,7 +4,7 @@ const SESSION_SECONDS = 8 * 60 * 60;
 const MATERIAL_COLUMNS = [
   'project_code', 'source_file', 'source_sheet', 'source_row', 'drawing', 'assembly',
   'description', 'part_no', 'size', 'scope', 'quantity', 'weight', 'received',
-  'remaining', 'as_symbol', 'delivery_date', 'issue_dates', 'is_main', 'parent', 'status',
+  'remaining', 'as_symbol', 'delivery_date', 'issue_dates', 'is_main', 'parent', 'note', 'status',
 ];
 const MATERIAL_IMPORT_COLUMNS = MATERIAL_COLUMNS.filter((column) => !['project_code', 'source_file'].includes(column));
 const BTP_COLUMNS = [
@@ -20,7 +20,7 @@ const BTP_COMMIT_BATCH_SIZE = 500;
 const MATERIAL_IMPORT_TTL_SECONDS = 60 * 60;
 const PROJECT_IMPORT_TTL_SECONDS = 60 * 60;
 const PROGRESS_COLUMNS = [
-  'project_code', 'source_file', 'source_row', 'item', 'mh', 'wo_date', 'product_type',
+  'project_code', 'source_file', 'source_row', 'shipment', 'item', 'mh', 'wo_date', 'product_type',
   'classification', 'allocation', 'drawing', 'part_no', 'size', 'quantity', 'unit_weight',
   'total_weight', 'profile', 'item_id', 'note', 'fitup_date', 'fitup_qty', 'fitup_weight', 'welding_date',
   'welding_qty', 'welding_weight', 'trial_assembly_date', 'trial_assembly_qty',
@@ -31,7 +31,7 @@ const MATERIAL_READ_COLUMNS = MATERIAL_COLUMNS.filter((column) => column !== 'pr
 const BTP_READ_COLUMNS = BTP_COLUMNS.filter((column) => column !== 'project_code').join(', ');
 const PROGRESS_READ_COLUMNS = PROGRESS_COLUMNS.filter((column) => column !== 'project_code').join(', ');
 const QLDA_FIELDS = {
-  2: 'project_code', 5: 'item', 6: 'mh', 7: 'wo_date', 8: 'product_type',
+  2: 'project_code', 4: 'shipment', 5: 'item', 6: 'mh', 7: 'wo_date', 8: 'product_type',
   9: 'classification', 10: 'allocation', 11: 'drawing', 12: 'part_no', 13: 'size',
   14: 'quantity', 15: 'unit_weight', 16: 'total_weight', 17: 'profile', 18: 'item_id',
   19: 'note', 36: 'fitup_date', 37: 'fitup_qty', 38: 'fitup_weight',
@@ -191,6 +191,7 @@ function parseMaterials(workbook, filename, projectCode, xlsx) {
       const marker = String(symbol || '').trim().toLowerCase();
       const isMain = ['x', '×', '✓', 'yes', 'true', '1'].includes(marker);
       const fields = normalizedRow(raw, MATERIAL_FIELDS);
+      fields.note = null;
       if (![fields.drawing, fields.assembly, fields.part_no, fields.description].some((item) => item !== null && item !== undefined)) continue;
       if (typeof fields.drawing === 'number') continue;
       if (isMain) parent = fields.assembly || fields.drawing || fields.description || 'Cấu kiện chính';
@@ -798,7 +799,7 @@ async function importMaterials(request, env) {
            AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
       ).bind(manifest.project_code, manifest.source_file, importId, startRow,
         Math.min(startRow + commitBatchSize, Number(manifest.expected_rows)), importId, runId) : env.DB.prepare(
-        `INSERT INTO materials (${insertColumns}) SELECT ?, ?, source_sheet, source_row, drawing, assembly, description, part_no, size, scope, quantity, weight, received, remaining, as_symbol, delivery_date, issue_dates, is_main, parent, status FROM material_import_rows
+        `INSERT INTO materials (${insertColumns}) SELECT ?, ?, source_sheet, source_row, drawing, assembly, description, part_no, size, scope, quantity, weight, received, remaining, as_symbol, delivery_date, issue_dates, is_main, parent, note, status FROM material_import_rows
          WHERE import_id = ? AND row_index >= ? AND row_index < ?
            AND EXISTS (SELECT 1 FROM material_imports WHERE id = ? AND committed = 1 AND commit_token = ?) ORDER BY row_index`
       ).bind(manifest.project_code, manifest.source_file, importId, startRow,
@@ -872,6 +873,15 @@ async function route(request, env) {
     const projectCode = safeProjectCode(btpMatch[1]);
     const { results } = await env.DB.prepare(`SELECT ${BTP_READ_COLUMNS} FROM btp_materials WHERE project_code = ? ORDER BY source_file, source_sheet, source_row`).bind(projectCode).all();
     return json({ project_code: projectCode, rows: results });
+  }
+  if (request.method === 'GET' && path === '/api/projects/progress') {
+    const requestedCodes = [...new Set(new URL(request.url).searchParams.getAll('project').map(safeProjectCode))];
+    if (!requestedCodes.length) throw new HttpError(400, 'Hãy chọn ít nhất một dự án để xem báo cáo.');
+    if (requestedCodes.length > 200) throw new HttpError(400, 'Có thể xem tối đa 200 dự án cùng lúc.');
+    const placeholders = requestedCodes.map(() => '?').join(', ');
+    const columns = PROGRESS_COLUMNS.join(', ');
+    const { results } = await env.DB.prepare(`SELECT ${columns} FROM project_progress WHERE project_code IN (${placeholders}) ORDER BY project_code, source_file, source_row`).bind(...requestedCodes).all();
+    return json({ project_codes: requestedCodes, rows: results });
   }
   const progressMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/progress$/);
   if (request.method === 'GET' && progressMatch) {

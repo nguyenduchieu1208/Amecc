@@ -1,7 +1,7 @@
-// Column whitelist: only mapped fields are copied. This excludes A, C:D, T:AI, AS,
-// and (with the range cap below) BB onward, including every file-specific Check column.
+// Column whitelist: the project view also reads Shipment from D. Excel export keeps
+// the user's requested removal of A, C:D, T:AI, AS, and every column from BB onward.
 const QLDA_FIELDS = {
-  2: 'project_code', 5: 'item', 6: 'mh', 7: 'wo_date', 8: 'product_type',
+  2: 'project_code', 4: 'shipment', 5: 'item', 6: 'mh', 7: 'wo_date', 8: 'product_type',
   9: 'classification', 10: 'allocation', 11: 'drawing', 12: 'part_no', 13: 'size',
   14: 'quantity', 15: 'unit_weight', 16: 'total_weight', 17: 'profile', 18: 'item_id',
   19: 'note', 36: 'fitup_date', 37: 'fitup_qty', 38: 'fitup_weight',

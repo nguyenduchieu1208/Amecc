@@ -93,6 +93,11 @@ function hasCurrentSchema(database, includeProjectImportStaging = true) {
   );
 }
 
+function hasExtendedSchema(database) {
+  return ['materials', 'material_import_rows'].every((table) => columnsFor(database, table).has('note'))
+    && ['project_progress', 'project_progress_import_rows'].every((table) => columnsFor(database, table).has('shipment'));
+}
+
 export function applyMigrations(database, migrationsDirectory = resolve(root, 'migrations')) {
   database.exec(`CREATE TABLE IF NOT EXISTS _amecc_migrations (
     filename TEXT PRIMARY KEY,
@@ -102,7 +107,7 @@ export function applyMigrations(database, migrationsDirectory = resolve(root, 'm
 
   // A D1 SQL export already has its complete schema but does not include the
   // local migration ledger. Detect that schema and record the matching files.
-  if (hasCurrentSchema(database)) {
+  if (hasCurrentSchema(database) && hasExtendedSchema(database)) {
     const record = database.prepare('INSERT OR IGNORE INTO _amecc_migrations (filename) VALUES (?)');
     const markCurrent = database.transaction(() => {
       for (const filename of migrationFiles) record.run(filename);
@@ -112,15 +117,23 @@ export function applyMigrations(database, migrationsDirectory = resolve(root, 'm
   }
 
   const applied = new Set(database.prepare('SELECT filename FROM _amecc_migrations').all().map((row) => row.filename));
+  if (!applied.size && hasCurrentSchema(database)) {
+    const record = database.prepare('INSERT OR IGNORE INTO _amecc_migrations (filename) VALUES (?)');
+    const markPreviousSchema = database.transaction(() => {
+      for (const filename of migrationFiles) if (filename !== '0008_material_notes_and_shipment.sql') record.run(filename);
+    });
+    markPreviousSchema();
+    for (const filename of migrationFiles) if (filename !== '0008_material_notes_and_shipment.sql') applied.add(filename);
+  }
   if (!applied.size && hasCurrentSchema(database, false)) {
     const record = database.prepare('INSERT OR IGNORE INTO _amecc_migrations (filename) VALUES (?)');
     const markPreviousSchema = database.transaction(() => {
       for (const filename of migrationFiles) {
-        if (filename !== '0007_project_import_staging.sql') record.run(filename);
+        if (filename !== '0007_project_import_staging.sql' && filename !== '0008_material_notes_and_shipment.sql') record.run(filename);
       }
     });
     markPreviousSchema();
-    for (const filename of migrationFiles) if (filename !== '0007_project_import_staging.sql') applied.add(filename);
+    for (const filename of migrationFiles) if (filename !== '0007_project_import_staging.sql' && filename !== '0008_material_notes_and_shipment.sql') applied.add(filename);
   }
   for (const filename of migrationFiles) {
     if (applied.has(filename)) continue;

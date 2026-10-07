@@ -9,6 +9,7 @@ import { BTP_COLUMNS, MAX_MATERIAL_FILE_BYTES, MAX_MATERIAL_FILE_MB, parseMateri
 import { filterBtpRows, filterMaterialGroups, filterMaterialRowsBySheet, filterMaterialRowsByStatus, getBtpShortageQuantity, getBtpShortageWeight, getMaterialShortageQuantity, highlightMatch, summarizeBtpShortages } from '../public/material-search.js';
 import { formatMaterialDate, getMaterialReceiptDate } from '../public/material-display.js';
 import { renderMaterialDashboard } from '../public/material-dashboard.js';
+import { renderProjectDashboard } from '../public/project-dashboard.js';
 import { buildMaterialAuditRows, hasBtpIdentity, isPurchasingMaterialSheet, linkBtpToBom, findProgressForAssembly } from '../public/material-linkage.js';
 import { buildBtpShortageTemplate, filterBtpRowsByReceiptDate } from '../public/shortage-export.js';
 import { fillTemplateWorkbook } from '../public/template-xlsx.js';
@@ -49,9 +50,9 @@ test('Supabase adapter pipelines batched SQL requests inside one transaction', a
           return Object.assign([{ statement, values }], { count: 1 });
         },
       };
-      const pipeline = callback(transaction);
-      assert.ok(Array.isArray(pipeline), 'Postgres.js receives the statements together to pipeline them');
-      return Promise.all(pipeline);
+      // Postgres.js begins a transaction with an async callback. The adapter
+      // issues every unsafe() call synchronously before awaiting the batch.
+      return callback(transaction);
     },
   };
   const database = new PostgresD1Adapter(client);
@@ -71,19 +72,21 @@ test('Supabase adapter pipelines batched SQL requests inside one transaction', a
 
 test('QLDA mapping exposes selected fields and excludes hidden source columns', () => {
   assert.equal(__test__.QLDA_FIELDS[2], 'project_code');
-  for (const column of [1,3,4,20,21,22,30,31,32,33,34,35,45,54,55,56,57,58,60,163,164]) {
+  assert.equal(__test__.QLDA_FIELDS[4], 'shipment');
+  for (const column of [1,3,20,21,22,30,31,32,33,34,35,45,54,55,56,57,58,60,163,164]) {
     assert.equal(__test__.QLDA_FIELDS[column], undefined, `column ${column} must not be emitted`);
   }
 });
 
 test('QLDA parser uses Progress rows starting at row four and removes source project field', () => {
   const workbook = { SheetNames:['Progress'], Sheets:{ Progress:{} } };
-  const xlsx = { utils:{ sheet_to_json:() => [[],[],[],['TT','A290','Group',null,'Frame','MH1',null,'Steel',null,null,'DWG1','P1','M20',4,2,8,'IPE','ID1','note',...Array(16).fill(null),'2026-09-01',1,2]] } };
+  const xlsx = { utils:{ sheet_to_json:() => [[],[],[],['TT','A290','Group','U1','Frame','MH1',null,'Steel',null,null,'DWG1','P1','M20',4,2,8,'IPE','ID1','note',...Array(16).fill(null),'2026-09-01',1,2]] } };
   const rows = __test__.parseProjectProgress(workbook, 'A290.xlsx', 'A290', xlsx);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].project_code, 'A290');
   assert.equal(rows[0].source_row, 4);
   assert.equal(rows[0].drawing, 'DWG1');
+  assert.equal(rows[0].shipment, 'U1');
   assert.equal(rows[0].fitup_date, '2026-09-01');
   assert.equal(rows[0].fitup_qty, 1);
   assert.equal(Object.hasOwn(rows[0], 'TT'), false);
@@ -202,7 +205,7 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   const auditPage = app.slice(auditStart, auditEnd);
   assert.ok(auditStart >= 0 && auditEnd > auditStart, 'BOM/BTP audit table must be the materials view');
   assert.match(auditPage, /pageGroups\.map\(auditBomGroupMarkup\)/);
-  assert.match(auditPage, /<section class="material-audit-controls[\s\S]*id="mobileAuditExtraFilters"[\s\S]*\$\{projectSelect\(\)\}[\s\S]*id="materialSheetDropdown"/);
+  assert.match(auditPage, /<section class="material-audit-controls[\s\S]*id="mobileAuditExtraFilters"[\s\S]*\$\{projectSelect\('materials'\)\}[\s\S]*id="materialSheetDropdown"/);
   assert.match(styles, /\.audit-filter-grid select,\.sheet-multi-select>summary\{width:100%;min-width:0/);
   assert.match(app, /function auditBtpTableRowMarkup\(row, query = ''\)/);
   assert.match(app, /function auditBomGroupMarkup\(\{ rows, detailRows = rows, query = '' \}\)/);
@@ -216,7 +219,7 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(enhancements, /\.bom-btp-group\[open\] \.bom-search-match-preview-wrap \{ display:none; \}/);
   assert.match(enhancements, /\.sheet-check-option input \{ grid-column:1; grid-row:1\/3;/);
   assert.match(enhancements, /\.material-audit-controls \{ position:sticky; top:72px; z-index:11;/);
-  assert.match(enhancements, /\.mobile-audit-extra-filters \{ display:none; \}[\s\S]*\.mobile-expanded \.mobile-audit-extra-filters \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\); grid-template-areas:"project sheet" "date unit" "status export"/);
+  assert.match(enhancements, /\.mobile-audit-extra-filters \{ display:none; \}[\s\S]*\.mobile-expanded \.mobile-audit-extra-filters \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\); grid-template-areas:"project sheet" "lot date" "unit status" "export export"/);
   assert.match(enhancements, /\.mobile-audit-search-row \{ display:grid; grid-template-columns:minmax\(0,1fr\) auto;/);
   assert.match(enhancements, /\.audit-search input \{ min-width:0; min-height:42px; font-size:16px!important/);
   assert.match(app, /id="toggleMobileAuditFilters"[\s\S]*aria-controls="mobileAuditExtraFilters"/);
@@ -249,16 +252,17 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(auditPage, /state\.progressData\?\.rows/);
   assert.match(styles, /\.material-audit-controls\{position:sticky;top:82px/);
   assert.match(app, /ADMIN_MODE\)[\s\S]*const key = location\.hash\.replace\(\/\^#\\\/?\//);
-  assert.match(app, /\['overview','materials','materials-dashboard','projects','admin'\]\.includes\(key\) \? key : 'admin'/);
-  assert.match(app, /href="\$\{ADMIN_MODE \? '#admin' : '\.\/admin\.html'\}"/);
+  assert.match(app, /\['overview','materials','materials-dashboard','projects-dashboard','projects','admin'\]\.includes\(key\) \? key : 'admin'/);
+  const shellSource = app.slice(app.indexOf('function shell()'), app.indexOf('function statCard('));
+  assert.doesNotMatch(shellSource, /href="[^\"]*admin/);
   assert.match(app, /href="#materials-dashboard">Dashboard BOM &amp; vật tư/);
   assert.match(styles, /\.bom-btp-table th:first-child,\.bom-btp-table td:first-child\{position:sticky;left:0/);
   assert.match(styles, /@media\(max-width:580px\)[\s\S]*\.bom-btp-table\{min-width:1280px\}/);
   assert.match(styles, /\.bom-btp-table-wrap\{max-height:min\(62vh,680px\);overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y\}/);
   assert.match(styles, /\.material-chart-svg\{display:block;width:auto;height:270px;max-width:none;flex:none\}/);
   assert.match(app, /state\.page === 'materials-dashboard' \? materialDashboardPage\(\)/);
-  assert.match(app, /id="materialDashboardStartDate"/);
-  assert.match(app, /id="materialDashboardEndDate"/);
+  assert.match(app, /dateFilterMarkup\('materialDashboardStartDate'/);
+  assert.match(app, /dateFilterMarkup\('materialDashboardEndDate'/);
   assert.match(app, /id="materialDashboardMetric"/);
   assert.match(app, /addEventListener\('change', \(event\) => \{\s*state\.materialDashboardMetric/);
   assert.match(app, /matchMedia\('\(max-width: 820px\)'\)/);
@@ -302,7 +306,8 @@ test('material dashboard charts cumulative receipt totals and received/shortage 
   assert.match(html, /01\/09\/2026 · lũy kế 1/);
   assert.match(html, /02\/09\/2026 · lũy kế 4/);
   assert.match(html, /DVG-A · đã nhận 3/);
-  assert.match(html, /DVG-A · còn thiếu hiện tại 2 BTP/);
+  assert.match(html, /data-shortage="2"/);
+  assert.match(html, /aria-label="DVG-A · đã nhận 3 BTP · còn thiếu 2 BTP"/);
 });
 
 test('material dashboard filters a selected date range and calculates kg or tonnes from BTL U.Weight', () => {
@@ -315,13 +320,27 @@ test('material dashboard filters a selected date range and calculates kg or tonn
   assert.match(kgHtml, /01\/09\/2026 · lũy kế 2 kg/);
   assert.match(kgHtml, /02\/09\/2026 · lũy kế 6 kg/);
   assert.match(kgHtml, /DVG-A · đã nhận 6 kg/);
-  assert.match(kgHtml, /DVG-A · còn thiếu hiện tại 6 kg/);
+  assert.match(kgHtml, /data-shortage="6" data-unit="kg"/);
+  assert.match(kgHtml, /aria-label="DVG-A · đã nhận 6 kg · còn thiếu 6 kg"/);
   assert.doesNotMatch(kgHtml, /31\/08\/2026/);
   assert.match(kgHtml, /1 lượt nhận và 1 dòng thiếu U\.Weight/);
 
   const tonHtml = renderMaterialDashboard([rows[0]], 'A290 · A290T1P1', { from:'2026-09-01', to:'2026-09-02', metric:'ton' });
   assert.match(tonHtml, /02\/09\/2026 · lũy kế 0,006 tấn/);
-  assert.match(tonHtml, /DVG-A · đã nhận 0,006 tấn/);
+  assert.match(tonHtml, /aria-label="DVG-A · đã nhận 0,006 tấn · còn thiếu 0,006 tấn"/);
+});
+
+test('project dashboard renders report charts with fullscreen controls and honours the selected weight unit', () => {
+  const html = renderProjectDashboard([
+    { project_code:'A290', allocation:'S1', total_weight:100, handover_date:'2026-09-01', handover_weight:25 },
+    { project_code:'U302', allocation:'S2', total_weight:200, handover_date:'2026-09-02', handover_weight:50 },
+  ], { metric:'ton', projectFilterMarkup:'<details class="project-multi-select"><summary>Tất cả dự án</summary></details>', sourceLabel:'2 dự án' });
+  assert.match(html, /project-multi-select/);
+  assert.match(html, /Đơn vị/);
+  assert.match(html, /Khối lượng · tấn/);
+  assert.match(html, /data-expand-chart/g);
+  assert.match(html, /0,3/);
+  assert.match(html, /Khối lượng bàn giao theo đơn vị nhận/);
 });
 
 test('A290 6HH-43 uses the date on its receipt record as the displayed receipt date', async () => {
@@ -393,6 +412,21 @@ test('browser PL parser emits only approved import fields and preserves grouping
   assert.equal(payload.records[1].source_sheet, 'PL-1');
   assert.equal(Object.hasOwn(payload.records[1], 'project_code'), false);
   assert.equal(Object.hasOwn(payload.records[1], 'filename'), false);
+});
+
+test('browser PL parser reads notes from the PL Remark sheet and links them by Part No.1', () => {
+  const header = [];
+  for (const [column, value] of [[2,'Drawing Number'],[4,'Description'],[5,'Part No.1'],[28,'AS Symbol']]) header[column - 1] = value;
+  const main = [];
+  for (const [column, value] of [[2,'DWG-1'],[4,'Main frame'],[5,'P-100'],[28,'x']]) main[column - 1] = value;
+  const workbook = { SheetNames:['PL-1','PL Remark'], Sheets:{ 'PL-1':{}, 'PL Remark':{} } };
+  const remarkRows = [['Part No.1','PL Remark'],['P-100','Check paint after fit-up']];
+  const parser = { utils:{ sheet_to_json:(sheet) => sheet === workbook.Sheets['PL-1']
+    ? [...Array.from({length:7}, () => []), header, main]
+    : sheet === workbook.Sheets['PL Remark'] ? remarkRows : [] } };
+  const payload = parseMaterialWorkbook(workbook, 'A290PL.xlsx', 'A290', parser);
+  assert.equal(payload.records.length, 1, 'PL Remark is metadata, not a material sheet');
+  assert.equal(payload.records[0].note, 'Check paint after fit-up');
 });
 
 test('BTP parser recognizes detail headers, keeps dated progress, and excludes issue date fields', () => {

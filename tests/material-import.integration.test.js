@@ -59,6 +59,8 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     database.exec(readFileSync('migrations/0004_btp_materials.sql', 'utf8'));
     database.exec(readFileSync('migrations/0005_btp_unit_weight.sql', 'utf8'));
     database.exec(readFileSync('migrations/0006_btp_bom_details.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0007_project_import_staging.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0008_material_notes_and_shipment.sql', 'utf8'));
 
     const token = 'isolated-a290-import-test-session';
     const tokenHash = createHash('sha256').update(token).digest('base64');
@@ -225,6 +227,8 @@ test('project data is public while PL file deletion is restricted to admins and 
       'migrations/0004_btp_materials.sql',
       'migrations/0005_btp_unit_weight.sql',
       'migrations/0006_btp_bom_details.sql',
+      'migrations/0007_project_import_staging.sql',
+      'migrations/0008_material_notes_and_shipment.sql',
     ]) database.exec(readFileSync(migration, 'utf8'));
 
     database.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
@@ -271,6 +275,16 @@ test('project data is public while PL file deletion is restricted to admins and 
     const publicProgressData = await publicProgress.json();
     assert.equal(publicProgressData.rows[0].drawing, 'QLDA-KEEP');
     assert.equal(Object.hasOwn(publicProgressData.rows[0], 'id'), false);
+
+    database.prepare('INSERT INTO projects (code, name, source_file) VALUES (?, ?, ?)').run('U302', 'U302', 'U302.xlsx');
+    database.prepare('INSERT INTO project_progress (project_code, source_file, source_row, shipment, drawing) VALUES (?, ?, ?, ?, ?)')
+      .run('U302', 'U302.xlsx', 4, 'U2', 'QLDA-U302');
+    const allProjectProgress = await worker.fetch(new Request('https://amecc.test/api/projects/progress?project=A290&project=U302'), env);
+    assert.equal(allProjectProgress.status, 200);
+    const allProjectProgressData = await allProjectProgress.json();
+    assert.deepEqual(allProjectProgressData.project_codes, ['A290', 'U302']);
+    assert.deepEqual(allProjectProgressData.rows.map((row) => row.project_code), ['A290', 'U302']);
+    assert.equal(allProjectProgressData.rows[1].shipment, 'U2');
 
     const filesWithoutAdmin = await worker.fetch(new Request('https://amecc.test/api/admin/pl-files'), env);
     assert.equal(filesWithoutAdmin.status, 401);
