@@ -714,13 +714,25 @@ function projectStageCell(row, stage) {
   if (data.optional || !data.hasRecord) return '<span class="project-stage-empty">—</span>';
   return `<div class="project-stage-cell ${data.complete ? 'complete' : ''}"><strong>${fmt(data.actual)}/${fmt(data.planned)}</strong><span>${fmt(data.weight)} kg</span><small>${esc(progressDate(data.date))}</small></div>`;
 }
+function projectAcceptedRows(row) {
+  const projectCode = row.project_code || state.currentProject;
+  return (state.progressData?.rows || [])
+    .filter((candidate) => (candidate.project_code || state.currentProject) === projectCode
+      && (Number(candidate.acceptance_qty || 0) > 0 || Number(candidate.acceptance_weight || 0) > 0))
+    .sort((a, b) => String(a.part_no || a.item_id || '').localeCompare(String(b.part_no || b.item_id || ''), 'vi', { numeric:true, sensitivity:'base' }));
+}
+function projectAcceptedRowCard(row) {
+  const partNo = row.part_no || row.item_id || 'Chưa có mã chi tiết';
+  return `<article class="project-accepted-row"><div class="project-accepted-row-heading"><strong>${fmt(partNo)}</strong><span>${fmt(row.shipment)}${row.item ? ` · ${fmt(row.item)}` : ''}</span></div><div class="project-accepted-row-meta"><span><small>Bản vẽ</small><b>${fmt(row.drawing)}</b></span><span><small>Ngày nghiệm thu</small><b>${esc(progressDate(row.acceptance_date))}</b></span><span><small>Số lượng nghiệm thu</small><b>${fmt(row.acceptance_qty)} / ${fmt(row.quantity)} pcs</b></span><span><small>Khối lượng nghiệm thu</small><b>${fmt(row.acceptance_weight)} kg</b></span>${row.acceptance_record_no ? `<span><small>Số biên bản nghiệm thu</small><b>${fmt(row.acceptance_record_no)}</b></span>` : ''}</div></article>`;
+}
 function projectDetailDialog(row) {
   const status = projectAssemblyStatus(row);
+  const acceptedRows = projectAcceptedRows(row);
   const technical = [
     ['Shipment', row.shipment], ['Hạng mục', row.item], ['Tổ phần giao', row.allocation ? `Tổ ${row.allocation}` : '—'],
     ['Tên bản vẽ', row.drawing], ['Quy cách (Size)', row.size], ['Số lượng (T’Qty)', `${fmt(row.quantity)} pcs`],
     ['Tổng khối lượng', `${fmt(row.total_weight)} kg`],
-    ['Ngày giao WO', progressDate(row.wo_date)], ['Profile / Dạng SP', [row.profile, row.product_type].filter(Boolean).join(' / ') || '—'],
+    ['Ngày giao hàng', progressDate(row.wo_date)], ['Profile / Dạng SP', [row.profile, row.product_type].filter(Boolean).join(' / ') || '—'],
     ['Đơn trọng (U.Wt)', `${fmt(row.unit_weight)} kg`],
   ];
   const stages = projectStages.map((stage) => {
@@ -728,7 +740,10 @@ function projectDetailDialog(row) {
     const stageStatus = data.optional ? 'Không yêu cầu công đoạn này' : data.complete ? 'Đã hoàn thành 100%' : data.actual > 0 ? `Đang thực hiện · ${data.percent}%` : 'Chưa thực hiện';
     const tone = data.optional ? 'optional' : data.complete ? 'complete' : data.actual > 0 ? 'in-progress' : 'pending';
     const quantity = data.optional ? 'Không áp dụng' : `${fmt(data.actual)} / ${fmt(data.planned)} pcs`;
-    return `<article class="project-detail-stage ${tone}"><div class="project-detail-stage-icon" aria-hidden="true">${stage.key === 'fitup' ? '⚒' : stage.key === 'welding' ? '♨' : stage.key === 'trial_assembly' ? '⌘' : stage.key === 'acceptance' ? '✓' : '⇢'}</div><div class="project-detail-stage-main"><div class="project-detail-stage-heading"><h4>${esc(stage.label)} <span>${esc(stage.fullLabel.replace(/^\d\.\s*/, ''))}</span></h4><strong>${esc(stageStatus)}</strong></div><div class="project-detail-stage-metrics"><span><small>Số lượng</small><b>${esc(quantity)}</b></span><span><small>Khối lượng</small><b>${fmt(data.weight)} kg</b></span><span><small>Ngày thực hiện</small><b>${esc(progressDate(data.date))}</b></span></div>${stage.key === 'handover' && (row.receiver || row.record_no) ? `<div class="project-delivery-meta">${row.receiver ? `<span>🏢 Đơn vị nhận: <b>${fmt(row.receiver)}</b></span>` : ''}${row.record_no ? `<span>▤ Số biên bản: <b>${fmt(row.record_no)}</b></span>` : ''}</div>` : ''}</div></article>`;
+    const acceptanceMeta = stage.key === 'acceptance'
+      ? `<div class="project-acceptance-meta"><span>▤ Số biên bản nghiệm thu: <b>${fmt(row.acceptance_record_no || 'Chưa có trong file QLDA')}</b></span><button class="button project-acceptance-toggle" type="button" data-toggle-accepted-details aria-expanded="false">Xem chi tiết đã nghiệm thu (${fmt(acceptedRows.length)})</button></div><div class="project-accepted-details" data-accepted-details hidden><div class="project-accepted-details-heading"><strong>${fmt(acceptedRows.length)} cấu kiện đã có khối lượng nghiệm thu</strong><span>Danh sách thuộc dự án ${fmt(row.project_code || state.currentProject)}</span></div><div class="project-accepted-list" data-acceptance-list>${acceptedRows.slice(0, 100).map(projectAcceptedRowCard).join('') || '<p class="project-accepted-empty">Chưa có cấu kiện nào được ghi nhận nghiệm thu.</p>'}</div>${acceptedRows.length > 100 ? `<button class="button project-accepted-more" type="button" data-load-more-accepted>Hiển thị thêm 100</button>` : ''}</div>`
+      : '';
+    return `<article class="project-detail-stage ${tone}"><div class="project-detail-stage-icon" aria-hidden="true">${stage.key === 'fitup' ? '⚒' : stage.key === 'welding' ? '♨' : stage.key === 'trial_assembly' ? '⌘' : stage.key === 'acceptance' ? '✓' : '⇢'}</div><div class="project-detail-stage-main"><div class="project-detail-stage-heading"><h4>${esc(stage.label)} <span>${esc(stage.fullLabel.replace(/^\d\.\s*/, ''))}</span></h4><strong>${esc(stageStatus)}</strong></div><div class="project-detail-stage-metrics"><span><small>Số lượng</small><b>${esc(quantity)}</b></span><span><small>Khối lượng</small><b>${fmt(data.weight)} kg</b></span><span><small>Ngày thực hiện</small><b>${esc(progressDate(data.date))}</b></span></div>${acceptanceMeta}${stage.key === 'handover' && (row.receiver || row.record_no) ? `<div class="project-delivery-meta">${row.receiver ? `<span>🏢 Đơn vị nhận: <b>${fmt(row.receiver)}</b></span>` : ''}${row.record_no ? `<span>▤ Số biên bản bàn giao: <b>${fmt(row.record_no)}</b></span>` : ''}</div>` : ''}</div></article>`;
   }).join('');
   return `<dialog class="project-assembly-dialog" aria-labelledby="projectAssemblyTitle"><div class="project-dialog-header"><div class="project-dialog-symbol" aria-hidden="true">◇</div><div class="project-dialog-title"><div><h3 id="projectAssemblyTitle">Cấu kiện: ${fmt(row.part_no || row.item_id || 'Chưa có mã')}</h3><span class="status-pill ${status.tone}">${esc(status.label)}</span></div><p>Dự án: ${esc(state.currentProject)}${row.shipment ? ` | Shipment: ${fmt(row.shipment)}` : ''}${row.item ? ` | Hạng mục: ${fmt(row.item)}` : ''}</p></div><button class="project-dialog-close" type="button" data-close-project-dialog aria-label="Đóng">×</button></div><div class="project-dialog-scroll"><section class="project-technical-panel"><h4><span aria-hidden="true">ⓘ</span> Thông số kỹ thuật cấu kiện</h4><div class="project-technical-grid">${technical.map(([label, value]) => `<div class="project-technical-item"><span>${esc(label)}</span><strong>${fmt(value)}</strong></div>`).join('')}</div></section><section class="project-detail-progress"><h4><span aria-hidden="true">⌁</span> Tiến độ 5 công đoạn chế tạo (hành trình cấu kiện)</h4><div class="project-detail-stage-list">${stages}</div></section></div><div class="project-dialog-footer"><button class="button" type="button" data-close-project-dialog>Đóng</button></div></dialog>`;
 }
@@ -738,6 +753,25 @@ function openProjectDetail(row) {
   page.insertAdjacentHTML('beforeend', projectDetailDialog(row));
   const dialog = page.querySelector('.project-assembly-dialog');
   dialog.querySelectorAll('[data-close-project-dialog]').forEach((button) => button.addEventListener('click', () => dialog.close()));
+  const acceptedDetailsToggle = dialog.querySelector('[data-toggle-accepted-details]');
+  const acceptedDetails = dialog.querySelector('[data-accepted-details]');
+  acceptedDetailsToggle?.addEventListener('click', () => {
+    const expanded = acceptedDetailsToggle.getAttribute('aria-expanded') === 'true';
+    acceptedDetailsToggle.setAttribute('aria-expanded', String(!expanded));
+    acceptedDetailsToggle.textContent = expanded ? `Xem chi tiết đã nghiệm thu (${fmt(projectAcceptedRows(row).length)})` : 'Thu gọn danh sách nghiệm thu';
+    acceptedDetails.hidden = expanded;
+  });
+  const acceptedRows = projectAcceptedRows(row);
+  const acceptedList = dialog.querySelector('[data-acceptance-list]');
+  const acceptedMore = dialog.querySelector('[data-load-more-accepted]');
+  let acceptedCount = Math.min(100, acceptedRows.length);
+  acceptedMore?.addEventListener('click', () => {
+    const nextRows = acceptedRows.slice(acceptedCount, acceptedCount + 100);
+    acceptedList.insertAdjacentHTML('beforeend', nextRows.map(projectAcceptedRowCard).join(''));
+    acceptedCount += nextRows.length;
+    if (acceptedCount >= acceptedRows.length) acceptedMore.remove();
+    else acceptedMore.textContent = `Hiển thị thêm ${Math.min(100, acceptedRows.length - acceptedCount)}`;
+  });
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   dialog.addEventListener('close', () => dialog.remove(), { once:true });
   if (typeof dialog.showModal === 'function') dialog.showModal();
