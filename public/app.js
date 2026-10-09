@@ -1,6 +1,6 @@
 const API_BASE = String(window.AMECC_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
 const API_KEY = String(window.AMECC_CONFIG?.apiKey || '');
-const ADMIN_MODE = /(?:^|\/)admin\.html$/.test(window.location.pathname);
+const ADMIN_MODE = /(?:^|\/)admin(?:\.html|\/?)$/.test(window.location.pathname);
 import { MAX_MATERIAL_FILE_BYTES, MAX_MATERIAL_FILE_MB, projectCodeFromFilename, readMaterialWorkbook } from './material-import.js';
 import { getBtpShortageQuantity, getBtpShortageWeight, highlightMatch } from './material-search.js';
 import { formatMaterialDate } from './material-display.js';
@@ -13,7 +13,7 @@ const app = document.querySelector('#app');
 const themes = ['light','midnight','paper','ocean','emerald','violet','graphite','sunset'];
 const themeLabels = { light:'Sáng tối giản', midnight:'Midnight', paper:'Giấy ấm', ocean:'Đại dương', emerald:'Ngọc lục bảo', violet:'Tím hiện đại', graphite:'Than chì', sunset:'Hoàng hôn' };
 const savedTheme = localStorage.getItem('amecc-theme') || 'light';
-const state = { user: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', materialLotFilter: '', projectSearch: '', projectMobileFiltersOpen: false, projectStatusFilter: '', projectShipmentFilter: '', projectItemFilter: '', projectTeamFilter: '', projectPageIndex: 0, projectDashboardData: null, projectDashboardDataKey: '', projectDashboardSelectedProjects: null, projectDashboardFiltersOpen: false, projectDashboardStartDate: '', projectDashboardEndDate: '', projectDashboardMetric: 'kg', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialPrintSelectedGroups: new Map(), materialPrintAvailableGroups: new Map(), materialExpandedGroups: new Set(), materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
+const state = { user: null, accounts: [], syncStatus: null, projects: [], plFiles: [], currentProject: '', loadedProject: '', materialLotFilter: '', projectSearch: '', projectMobileFiltersOpen: false, projectStatusFilter: '', projectShipmentFilter: '', projectItemFilter: '', projectTeamFilter: '', projectPageIndex: 0, projectDashboardData: null, projectDashboardDataKey: '', projectDashboardSelectedProjects: null, projectDashboardFiltersOpen: false, projectDashboardStartDate: '', projectDashboardEndDate: '', projectDashboardMetric: 'kg', auditDataCache: null, materialSelectedSheets: null, materialReceiptDateFilter: '', materialUnitFilter: '', materialStatusFilter: '', materialSearch: '', materialPageIndex: 0, materialMobileFiltersOpen: false, materialPrintSelectedGroups: new Map(), materialPrintAvailableGroups: new Map(), materialExpandedGroups: new Set(), materialDashboardSheetFilter: '', materialDashboardStartDate: '', materialDashboardEndDate: '', materialDashboardMetric: 'quantity', page: 'overview', theme: themes.includes(savedTheme) ? savedTheme : 'light', sidebarCollapsed: localStorage.getItem('amecc-sidebar-collapsed') === 'true', data: null, btpData: null, progressData: null, loading: false };
 const labels = {
   project_code: 'Dự án', shipment: 'Shipment', item: 'Hạng mục', mh: 'MH', wo_date: 'Ngày WO', product_type: 'Dạng SP', classification: 'Phân loại', allocation: 'Phân giao', drawing: 'Bản vẽ', part_no: 'Số chi tiết', size: 'Size', quantity: 'T’Qty', unit_weight: 'U.Weight', btp_unit_weight: 'U.Weight (kg/chi tiết)', total_weight: 'T.Weight', profile: 'Profile', item_id: 'ID', note: 'Ghi chú', fitup_date: 'Ngày gá', fitup_qty: 'SL gá', fitup_weight: 'KL gá', welding_date: 'Ngày hàn', welding_qty: 'SL hàn', welding_weight: 'KL hàn', trial_assembly_date: 'Ngày tổ hợp', trial_assembly_qty: 'SL tổ hợp', trial_assembly_weight: 'KL tổ hợp', acceptance_date: 'Ngày nghiệm thu', acceptance_qty: 'SL nghiệm thu', acceptance_weight: 'KL nghiệm thu', handover_date: 'Ngày bàn giao', handover_qty: 'SL bàn giao', handover_weight: 'KL bàn giao', receiver: 'Đơn vị nhận', record_no: 'Số biên bản', assembly: 'Cụm lắp ráp', description: 'Mô tả', scope: 'Phạm vi công việc', weight: 'Khối lượng', received: 'Đã nhận', remaining: 'Còn thiếu', as_symbol: 'AS Symbol', delivery_date: 'Ngày nhận', issue_dates: 'Ngày trên biên bản', parent: 'Cấu kiện chính', material_type: 'Chủng loại', material: 'Vật liệu', unit: 'Đơn vị giao (DVG)', shortage_rows: 'Dòng còn thiếu', part_count: 'Số mã BTP', shortage_quantity: 'SL còn thiếu', shortage_weight: 'Khối lượng thiếu (kg)', weight_missing_rows: 'Dòng thiếu U.Weight', daily_progress: 'Lịch nhận · ngày: số lượng', status: 'Trạng thái', source_file: 'File nguồn', source_sheet: 'Sheet', source_row: 'Dòng nguồn', is_main: 'Cấu kiện chính', material_rows: 'Dòng vật tư', progress_rows: 'Dòng tiến độ', updated_at: 'Cập nhật',
 };
@@ -140,7 +140,7 @@ function loadExcelJsLibrary() {
 const projectDataRequests = new Map();
 const projectDashboardRequests = new Map();
 let renderGeneration = 0;
-function currentPageTitle() { return ({ overview:'Danh mục dự án', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', 'projects-dashboard':'Dashboard quản lý dự án', projects:'Quản lý dự án' })[state.page] || 'AMECC'; }
+function currentPageTitle() { return ({ overview:'Danh mục dự án', materials:'BOM & Vật tư PL', 'materials-dashboard':'Dashboard BOM & vật tư', 'projects-dashboard':'Dashboard quản lý dự án', projects:'Quản lý dự án', admin:'Quản trị tài khoản & dữ liệu', accounts:'Tài khoản & phân quyền', sync:'Đồng bộ dữ liệu' })[state.page] || 'AMECC'; }
 function shell() {
   const navigation = `<div class="nav-label">KHÔNG GIAN LÀM VIỆC</div>
       <nav class="nav-list" aria-label="Điều hướng chính">
@@ -153,10 +153,12 @@ function shell() {
           <button class="nav-parent" type="button" data-group="projects" aria-expanded="${['projects','projects-dashboard'].includes(state.page)}">${icon('projects')}<span>Quản lý dự án</span><span class="nav-chevron">${icon('chevron')}</span></button>
           <div class="nav-children"><a class="nav-child ${state.page === 'projects-dashboard' ? 'active' : ''}" href="#projects-dashboard">Dashboard báo cáo</a><a class="nav-child ${state.page === 'projects' ? 'active' : ''}" href="#projects">Tiến độ dự án</a></div>
         </div>
+        ${ADMIN_MODE ? `<div class="nav-label admin-nav-label">QUẢN TRỊ</div><div class="nav-group ${['admin','accounts','sync'].includes(state.page) ? 'expanded' : ''}"><button class="nav-parent" type="button" data-group="admin" aria-expanded="${['admin','accounts','sync'].includes(state.page)}">${icon('admin')}<span>Quản trị</span><span class="nav-chevron">${icon('chevron')}</span></button><div class="nav-children">${state.user?.capabilities?.can_manage_data ? `<a class="nav-child ${state.page === 'admin' ? 'active' : ''}" href="#admin">Quản trị dữ liệu</a>` : ''}${state.user?.capabilities?.can_manage_accounts ? `<a class="nav-child ${state.page === 'accounts' ? 'active' : ''}" href="#accounts">Tài khoản</a>` : ''}${state.user?.capabilities?.can_sync ? `<a class="nav-child ${state.page === 'sync' ? 'active' : ''}" href="#sync">Đồng bộ dữ liệu</a>` : ''}</div></div>` : ''}
       </nav>`;
+  const assetPrefix = ADMIN_MODE ? '../assets/' : './assets/';
   app.innerHTML = `<div class="shell theme-${esc(state.theme)} ${state.sidebarCollapsed ? 'sidebar-collapsed' : ''}">
     <aside class="sidebar" id="sidebar">
-      <a class="brand" href="#overview" aria-label="AMECC - Trang tổng quan"><img src="./assets/logo.png" alt="AMECC"><span class="brand-caption">PROJECT CONTROL</span></a>
+      <a class="brand" href="#overview" aria-label="AMECC - Trang tổng quan"><img src="${assetPrefix}logo.png" alt="AMECC"><span class="brand-caption">PROJECT CONTROL</span></a>
       ${navigation}
       <div class="sidebar-bottom">
         <section class="sidebar-settings" aria-label="Cài đặt giao diện"><button class="settings-toggle" id="settingsToggle" type="button" aria-label="Mở cài đặt giao diện" title="Cài đặt giao diện">${icon('settings')}<span>Cài đặt giao diện</span></button><div class="settings-heading">CÀI ĐẶT GIAO DIỆN</div><label class="settings-theme-label">Giao diện<select class="theme-select" id="themeSelect" aria-label="Chọn giao diện">${themes.map((theme) => `<option value="${theme}" ${theme === state.theme ? 'selected' : ''}>${themeLabels[theme]}</option>`).join('')}</select></label></section>
@@ -166,9 +168,9 @@ function shell() {
     </aside>
     <div class="mobile-scrim" id="scrim"></div>
     <main class="main-area">
-      <header class="topbar"><button class="icon-button mobile-menu" id="mobileMenu" aria-label="Mở menu">${icon('menu')}</button><div><div class="top-eyebrow">AMECC <span>/</span> WORKSPACE</div><h1 id="pageTitle">${currentPageTitle()}</h1></div>
-      </header><section id="page" class="page" aria-live="polite"></section>
+      <header class="topbar"><button class="icon-button mobile-menu" id="mobileMenu" aria-label="Mở menu">${icon('menu')}</button><div><div class="top-eyebrow">AMECC <span>/</span> WORKSPACE</div><h1 id="pageTitle">${currentPageTitle()}</h1></div><div class="top-actions">${state.user ? `<button class="user-chip account-trigger" id="accountButton" type="button"><span class="avatar">${esc(state.user.username.slice(0,1).toUpperCase())}</span><span>${esc(state.user.username)}</span></button><button class="icon-button logout-button" id="logout" type="button" aria-label="Đăng xuất" title="Đăng xuất">${icon('logout')}</button>` : `<button class="button primary guest-login" id="loginButton" type="button">Đăng nhập</button>`}</div></header><section id="page" class="page" aria-live="polite"></section>
     </main>
+    <div class="account-modal-backdrop" id="accountModal" hidden><section class="account-modal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle"><button class="icon-button account-modal-close" id="closeAccountModal" type="button" aria-label="Đóng">×</button><div id="accountModalContent"></div></section></div>
   </div>`;
   document.querySelector('#themeSelect').addEventListener('change', (event) => applyTheme(event.currentTarget.value));
   document.querySelector('#sidebarCollapse').addEventListener('click', () => {
@@ -197,6 +199,10 @@ function shell() {
     document.querySelector('#themeSelect').focus();
   });
   document.querySelector('#logout')?.addEventListener('click', logout);
+  document.querySelector('#loginButton')?.addEventListener('click', () => showLoginModal());
+  document.querySelector('#accountButton')?.addEventListener('click', () => showProfileModal());
+  document.querySelector('#closeAccountModal')?.addEventListener('click', closeAccountModal);
+  document.querySelector('#accountModal')?.addEventListener('pointerdown', (event) => { if (event.target.id === 'accountModal') closeAccountModal(); });
   document.querySelector('#mobileMenu').addEventListener('click', () => document.querySelector('.shell').classList.add('drawer-open'));
   document.querySelector('#scrim').addEventListener('click', () => document.querySelector('.shell').classList.remove('drawer-open'));
   document.querySelectorAll('.nav-parent').forEach((button) => button.addEventListener('click', () => {
@@ -208,18 +214,107 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') document.querySelector('.shell')?.classList.remove('drawer-open');
 });
 function loginScreen(message = '') {
-  app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><span class="eyebrow">PROJECT OPERATIONS PLATFORM</span><h1>Đăng nhập quản trị</h1><p>Đăng nhập để cập nhật workbook, quản lý tài khoản và file dự án.</p>${message ? `<div class="notice error">${esc(message)}</div>` : ''}<form id="loginForm"><label>Tên đăng nhập<input name="username" autocomplete="username" required minlength="3"></label><label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary full-width" type="submit">Đăng nhập <span>→</span></button></form><a class="admin-public-link" href="./index.html">← Quay lại trang xem dữ liệu công khai</a><div class="auth-foot"><span class="online-dot"></span> Kết nối bảo mật · Chỉ tài khoản admin được cập nhật</div></section><span class="auth-copyright">© AMECC · INTERNAL PROJECT WORKSPACE</span></main>`;
+  const assetPrefix = ADMIN_MODE ? '../assets/' : './assets/';
+  const publicHref = ADMIN_MODE ? '../' : './';
+  app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="${assetPrefix}logo.png" alt="AMECC"></div><span class="eyebrow">PROJECT OPERATIONS PLATFORM</span><h1>Đăng nhập quản trị</h1><p>Đăng nhập để quản lý tài khoản, đồng bộ hoặc cập nhật dữ liệu.</p>${message ? `<div class="notice error">${esc(message)}</div>` : ''}<form id="loginForm"><label>Tên đăng nhập hoặc email<input name="username" autocomplete="username" required minlength="3"></label><label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary full-width" type="submit">Đăng nhập <span>→</span></button></form><button class="text-button" id="forgotPasswordLink" type="button">Quên mật khẩu?</button><a class="admin-public-link" href="${publicHref}">← Quay lại trang xem dữ liệu công khai</a><div class="auth-foot"><span class="online-dot"></span> Dữ liệu dự án vẫn được xem công khai</div></section><span class="auth-copyright">© AMECC · INTERNAL PROJECT WORKSPACE</span><div class="account-modal-backdrop" id="accountModal" hidden><section class="account-modal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle"><button class="icon-button account-modal-close" id="closeAccountModal" type="button" aria-label="Đóng">×</button><div id="accountModalContent"></div></section></div></main>`;
   document.querySelector('#loginForm').addEventListener('submit', async (event) => {
     event.preventDefault(); const form = new FormData(event.currentTarget); const button = event.currentTarget.querySelector('button'); button.disabled = true; button.textContent = 'Đang xác thực…';
     try {
       const result = await api('/api/auth/login', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ username:form.get('username'), password:form.get('password') }) });
-      if (result.user?.role !== 'admin') throw new Error('Trang cập nhật chỉ dành cho tài khoản admin.');
+      if (!result.user?.capabilities?.can_sync && !result.user?.capabilities?.can_manage_accounts && !result.user?.capabilities?.can_manage_data) throw new Error('Tài khoản này chưa được cấp quyền vào khu vực quản trị.');
       sessionStorage.setItem('amecc-session-token', result.token); state.user = result.user;
       location.hash = 'admin';
       await initializeWorkspace();
     }
     catch (error) { loginScreen(error.message); }
   });
+  document.querySelector('#closeAccountModal')?.addEventListener('click', closeAccountModal);
+  document.querySelector('#accountModal')?.addEventListener('pointerdown', (event) => { if (event.target.id === 'accountModal') closeAccountModal(); });
+  document.querySelector('#forgotPasswordLink')?.addEventListener('click', showForgotPasswordModal);
+}
+
+function accountModalContent(html) {
+  const modal = document.querySelector('#accountModal');
+  const content = document.querySelector('#accountModalContent');
+  if (!modal || !content) return;
+  if (modal.hidden) modal.returnFocusTarget = document.activeElement;
+  content.innerHTML = html;
+  modal.hidden = false;
+  document.body.classList.add('account-modal-open');
+  modal.querySelector('.account-modal-close')?.focus();
+}
+function closeAccountModal() {
+  const modal = document.querySelector('#accountModal');
+  if (modal) {
+    modal.hidden = true;
+    if (modal.returnFocusTarget?.isConnected) modal.returnFocusTarget.focus();
+    modal.returnFocusTarget = null;
+  }
+  document.body.classList.remove('account-modal-open');
+}
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  const modal = document.querySelector('#accountModal:not([hidden])');
+  if (modal) { event.preventDefault(); closeAccountModal(); }
+});
+function showLoginModal(message = '') {
+  accountModalContent(`<span class="eyebrow">TÀI KHOẢN AMECC</span><h2 id="accountModalTitle">Đăng nhập</h2><p class="muted">Dữ liệu vẫn xem được khi chưa đăng nhập.</p><div class="form-message error-message" id="modalLoginMessage">${esc(message)}</div><form id="modalLoginForm" class="account-form"><label>Tên đăng nhập hoặc email<input name="username" autocomplete="username" minlength="3" required></label><label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary" type="submit">Đăng nhập</button></form><button class="text-button" id="forgotPasswordOpen" type="button">Quên mật khẩu?</button>`);
+  document.querySelector('#modalLoginForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget); const button = event.currentTarget.querySelector('button'); button.disabled = true;
+    try {
+      const result = await api('/api/auth/login', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ username:form.get('username'), password:form.get('password') }) });
+      sessionStorage.setItem('amecc-session-token', result.token); state.user = result.user; closeAccountModal();
+      if (ADMIN_MODE && !isPrivilegedFrontend(state.user)) { state.user = null; sessionStorage.removeItem('amecc-session-token'); showLoginModal('Tài khoản này chưa được cấp quyền vào khu vực quản trị.'); return; }
+      if (ADMIN_MODE) await navigate(); else { shell(); await renderPage(); }
+    } catch (error) {
+      const output = document.querySelector('#modalLoginMessage'); if (output) output.textContent = error.message;
+      button.disabled = false;
+    }
+  });
+  document.querySelector('#forgotPasswordOpen')?.addEventListener('click', showForgotPasswordModal);
+}
+function isPrivilegedFrontend(user) { return ['superadmin','level1','level2'].includes(user?.admin_level) || Boolean(user?.can_sync); }
+
+function showForgotPasswordModal() {
+  accountModalContent(`<span class="eyebrow">KHÔI PHỤC TÀI KHOẢN</span><h2 id="accountModalTitle">Đặt lại mật khẩu</h2><p class="muted">Nhập email đã xác minh. Mã dùng một lần sẽ được gửi từ Hiếu Nguyễn.</p><div class="form-message" id="forgotMessage" aria-live="polite"></div><form id="forgotRequestForm" class="account-form"><label>Email đã xác minh<input name="email" type="email" autocomplete="email" required></label><button class="button primary" type="submit">Gửi mã đặt lại</button></form><form id="forgotResetForm" class="account-form" hidden><label>Mã 6 chữ số<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><label>Mật khẩu mới (ít nhất 12 ký tự)<input name="password" type="password" minlength="12" autocomplete="new-password" required></label><button class="button primary" type="submit">Xác nhận đổi mật khẩu</button></form><button class="text-button" id="backToLogin" type="button">Quay lại đăng nhập</button>`);
+  const requestForm = document.querySelector('#forgotRequestForm');
+  requestForm?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const email = new FormData(event.currentTarget).get('email'); const output = document.querySelector('#forgotMessage'); const button = event.currentTarget.querySelector('button'); button.disabled = true;
+    try { const result = await api('/api/auth/password/forgot', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({email}) }); output.textContent = result.message; output.className = 'form-message success-message'; document.querySelector('#forgotResetForm').hidden = false; }
+    catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; }
+    finally { button.disabled = false; }
+  });
+  document.querySelector('#forgotResetForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const fields = new FormData(event.currentTarget); const email = new FormData(requestForm).get('email'); const output = document.querySelector('#forgotMessage'); const button = event.currentTarget.querySelector('button'); button.disabled = true;
+    try { const result = await api('/api/auth/password/reset', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({email, code:fields.get('code'), password:fields.get('password')}) }); output.textContent = result.message; output.className = 'form-message success-message'; event.currentTarget.reset(); }
+    catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; }
+    finally { button.disabled = false; }
+  });
+  document.querySelector('#backToLogin')?.addEventListener('click', () => showLoginModal());
+}
+
+function showProfileModal() {
+  if (!state.user) { showLoginModal(); return; }
+  const verified = Boolean(state.user.email_verified_at);
+  accountModalContent(`<span class="eyebrow">HỒ SƠ CÁ NHÂN</span><h2 id="accountModalTitle">${esc(state.user.username)}</h2><p class="muted">${esc(state.user.admin_level === 'none' ? 'Tài khoản xem dữ liệu' : ({superadmin:'Superadmin',level1:'Level 1',level2:'Level 2'})[state.user.admin_level])}</p><section class="profile-section"><h3>Email khôi phục</h3><p>${state.user.email ? `${esc(state.user.email)} · ${verified ? 'Đã xác minh' : 'Chưa xác minh'}` : 'Chưa thêm email'}</p><form id="profileEmailForm" class="account-form"><label>Email cá nhân<input name="email" type="email" value="${esc(state.user.email || '')}" autocomplete="email" required></label><button class="button" type="submit">Gửi mã xác minh</button></form><form id="profileVerifyEmailForm" class="account-form"><label>Mã xác minh 6 chữ số<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><button class="button" type="submit">Xác minh email</button></form><div class="form-message" id="emailProfileMessage" aria-live="polite"></div></section><section class="profile-section"><h3>Đổi mật khẩu</h3><form id="profilePasswordForm" class="account-form"><label>Mật khẩu hiện tại<input name="current_password" type="password" autocomplete="current-password" required></label><label>Mật khẩu mới (ít nhất 12 ký tự)<input name="new_password" type="password" minlength="12" autocomplete="new-password" required></label><button class="button primary" type="submit">Đổi mật khẩu</button></form><div class="form-message" id="passwordProfileMessage" aria-live="polite"></div></section><button class="text-button" id="profileLogout" type="button">Đăng xuất</button>`);
+  document.querySelector('#profileEmailForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const email = new FormData(event.currentTarget).get('email'); const output = document.querySelector('#emailProfileMessage'); const button = event.currentTarget.querySelector('button'); button.disabled = true;
+    try { const result = await api('/api/auth/email/request', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({email}) }); output.textContent = result.message; output.className = 'form-message success-message'; }
+    catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; }
+    finally { button.disabled = false; }
+  });
+  document.querySelector('#profileVerifyEmailForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const code = new FormData(event.currentTarget).get('code'); const output = document.querySelector('#emailProfileMessage'); const button = event.currentTarget.querySelector('button'); button.disabled = true;
+    try { const result = await api('/api/auth/email/verify', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({code}) }); state.user = result.user; showProfileModal(); }
+    catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; button.disabled = false; }
+  });
+  document.querySelector('#profilePasswordForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const fields = new FormData(event.currentTarget); const output = document.querySelector('#passwordProfileMessage'); const button = event.currentTarget.querySelector('button'); button.disabled = true;
+    try { const result = await api('/api/auth/password/change', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({current_password:fields.get('current_password'), new_password:fields.get('new_password')}) }); output.textContent = result.message; output.className = 'form-message success-message'; event.currentTarget.reset(); }
+    catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; }
+    finally { button.disabled = false; }
+  });
+  document.querySelector('#profileLogout')?.addEventListener('click', async () => { closeAccountModal(); await logout(); });
 }
 function heading(eyebrow, title, description, action = '') { return `<div class="page-heading"><div><span class="eyebrow">${eyebrow}</span><h2>${title}</h2><p>${description}</p></div>${action}</div>`; }
 function statCard(label, value, caption, tone = '') { return `<article class="stat-card ${tone}"><div class="stat-top"><span>${label}</span><span class="stat-symbol">●</span></div><strong>${fmt(value)}</strong><small>${caption}</small></article>`; }
@@ -849,11 +944,26 @@ function projectsPage() {
     <p class="footnote">Bấm mã cấu kiện hoặc biểu tượng xem để mở thông số kỹ thuật và lịch sử từng công đoạn. Không nhập vào báo cáo: A, C–D, T–AI, AS và BB đến cột cuối (bắt đầu từ Check 1).</p>`;
 }
 function adminPage() {
-  return `${heading('ACCESS CONTROL · ADMIN','Quản trị tài khoản & dữ liệu','Tạo tài khoản chỉ xem và nhập dữ liệu thực từ workbook trên máy tính của bạn.')}
-    <div class="admin-grid"><section class="panel"><div class="panel-title"><span class="eyebrow">USER ACCESS</span><h3>Tạo tài khoản người xem</h3><p>Tài khoản viewer chỉ có quyền đọc dữ liệu; không thể tải hoặc thay thế dữ liệu.</p></div><form id="viewerForm" class="form-grid"><label>Tên đăng nhập<input name="username" minlength="3" maxlength="64" required></label><label>Mật khẩu tạm (ít nhất 12 ký tự)<input name="password" type="password" minlength="12" required></label><button class="button primary" type="submit">Tạo tài khoản viewer</button><div class="form-message" id="viewerMessage" aria-live="polite"></div></form></section>
-    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>PL và BTP được phân tích trên trình duyệt rồi gửi JSON; có thể chọn nhiều file PL. Tải file trùng tên sẽ thay thế dữ liệu cũ cùng file.</p></div><form id="importForm" class="form-grid"><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL + BTP</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small id="importFileHint">Chọn một hoặc nhiều file PL, tên mỗi file kết thúc bằng PL.xlsx; tối đa ${MAX_MATERIAL_FILE_MB} MB/file.</small></label><div class="form-message import-project-preview" id="importProjectPreview" aria-live="polite">Mã dự án sẽ lấy từ tên file.</div><div class="import-file-progress" id="importFileProgress" aria-live="polite" hidden></div><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section></div>
+  return `${heading('ACCESS CONTROL · ADMIN','Quản trị dữ liệu','Quản lý workbook đã nhập. Người xem vẫn truy cập trang dữ liệu công khai.')}
+    <section class="panel"><div class="panel-title"><span class="eyebrow">WORKBOOK IMPORT</span><h3>Nạp dữ liệu từ máy tính</h3><p>PL và BTP được phân tích trên trình duyệt rồi gửi JSON; có thể chọn nhiều file PL. Tải file trùng tên sẽ thay thế dữ liệu cũ cùng file.</p></div><form id="importForm" class="form-grid"><label>Loại dữ liệu<select name="category"><option value="materials">Vật tư PL + BTP</option><option value="projects">Tiến độ QLDA</option></select></label><label class="file-picker">Chọn file Excel<input name="file" type="file" accept=".xlsx" required><small id="importFileHint">Chọn một hoặc nhiều file PL, tên mỗi file kết thúc bằng PL.xlsx; tối đa ${MAX_MATERIAL_FILE_MB} MB/file.</small></label><div class="form-message import-project-preview" id="importProjectPreview" aria-live="polite">Mã dự án sẽ lấy từ tên file.</div><div class="import-file-progress" id="importFileProgress" aria-live="polite" hidden></div><button class="button primary" type="submit">${icon('upload')}<span>Kiểm tra &amp; nhập dữ liệu</span></button><div class="form-message" id="importMessage" aria-live="polite"></div></form></section>
     <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">PL / BTP FILES</span><h3>File vật tư đang lưu</h3><p>Xóa file tại đây để gỡ dữ liệu PL/BTP cũ trước khi nhập file thay thế. Tiến độ QLDA không bị ảnh hưởng.</p></div><div id="plFileList">${plFilesMarkup()}</div></section>
     <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">PROJECT DATA</span><h3>Các dự án trên hệ thống</h3></div>${state.projects.length ? `<div class="account-list">${state.projects.map((project) => `<div class="account-row"><b>${esc(project.code)}</b><span>${fmt(project.material_rows)} vật tư</span><span>${fmt(project.progress_rows)} tiến độ</span><small>${fmt(project.updated_at)}</small></div>`).join('')}</div>` : '<p class="muted">Chưa nhập workbook nào.</p>'}</section>`;
+}
+function roleLabel(level) { return ({superadmin:'Superadmin',level1:'Level 1',level2:'Level 2',none:'Người xem'})[level] || 'Người xem'; }
+function accountListMarkup() {
+  return state.accounts.length ? `<div class="account-list account-management-list">${state.accounts.map((user) => `<article class="managed-account-row"><div><strong>${esc(user.username)} ${user.owner_protected ? '<span class="owner-badge">Chủ hệ thống</span>' : ''}</strong><small>${esc(roleLabel(user.admin_level))} · ${user.email ? `${esc(user.email)}${user.email_verified_at ? ' · Email đã xác minh' : ' · Email chưa xác minh'}` : 'Chưa thêm email'}</small></div><span class="account-state ${user.is_active ? 'active' : 'inactive'}">${user.is_active ? 'Đang hoạt động' : 'Đã khóa'}</span><div class="managed-account-actions">${user.admin_level === 'none' ? `<button class="button" type="button" data-toggle-sync="${esc(user.id)}" aria-pressed="${user.can_sync}">${user.can_sync ? 'Tắt quyền đồng bộ' : 'Cho phép đồng bộ'}</button>` : '<span class="muted">Có quyền đồng bộ</span>'}${state.user?.admin_level === 'superadmin' && !user.owner_protected ? `<button class="button danger" type="button" data-delete-account="${esc(user.id)}">Xóa tài khoản</button>` : ''}</div></article>`).join('')}</div>` : '<div class="empty-state"><strong>Chưa có tài khoản phụ</strong><p>Tạo tài khoản đầu tiên bằng biểu mẫu phía trên.</p></div>';
+}
+function accountsPage() {
+  const owner = state.user?.admin_level === 'superadmin';
+  return `${heading('ACCESS CONTROL · USERS','Tài khoản & phân quyền','Tài khoản chủ được bảo vệ. Level 1 chỉ tạo Level 2; Level 2 không cấp tài khoản.')}
+    <section class="panel"><div class="panel-title"><span class="eyebrow">TẠO TÀI KHOẢN</span><h3>${owner ? 'Cấp tài khoản' : 'Cấp tài khoản Level 2'}</h3><p>Mật khẩu tạm tối thiểu 12 ký tự. Người dùng có thể tự đổi mật khẩu và thêm email khôi phục.</p></div><form id="accountCreateForm" class="account-create-grid"><label>Tên đăng nhập<input name="username" minlength="3" maxlength="64" autocomplete="off" required></label><label>Mật khẩu tạm<input name="password" type="password" minlength="12" autocomplete="new-password" required></label><label>Cấp quyền<select name="admin_level" ${owner ? '' : 'disabled'}>${owner ? '<option value="none">Người xem</option><option value="level1">Level 1 · được cấp Level 2</option><option value="level2">Level 2 · không cấp tài khoản</option>' : '<option value="level2">Level 2 · không cấp tài khoản</option>'}</select></label>${owner ? '<label class="permission-check"><input name="can_sync" type="checkbox"><span>Cho người xem quyền đồng bộ</span></label>' : ''}<button class="button primary" type="submit">Tạo tài khoản</button><div class="form-message" id="accountCreateMessage" aria-live="polite"></div></form></section>
+    <section class="panel account-panel"><div class="panel-title"><span class="eyebrow">DANH SÁCH TÀI KHOẢN</span><h3>Quản lý quyền</h3><p>Superadmin được cấp và xóa tài khoản. Superadmin và Level 1 có thể bật/tắt quyền đồng bộ của người xem.</p></div><div id="managedAccountList">${accountListMarkup()}</div></section>`;
+}
+function syncPage() {
+  const status = state.syncStatus;
+  const labelsByStatus = {queued:'Đang chờ Apps Script',running:'Đang đồng bộ Drive',completed:'Đồng bộ hoàn tất',failed:'Đồng bộ gặp lỗi'};
+  return `${heading('DATA OPERATIONS · DRIVE','Đồng bộ dữ liệu','Yêu cầu Apps Script kiểm tra file thay đổi trong Drive. Có giới hạn thời gian giữa hai lần chạy.')}
+    <section class="panel sync-panel"><div class="panel-title"><span class="eyebrow">DRIVE SYNC</span><h3>Cập nhật workbook từ Drive</h3><p>Apps Script sẽ lấy các file mới hoặc thay đổi theo các thư mục đã cấu hình. Yêu cầu đang chạy được giữ trạng thái để người khác không tạo lượt trùng.</p></div><div class="sync-action-row"><button class="button primary" id="syncNowButton" type="button">${icon('refresh')}<span>Đồng bộ ngay</span></button><span class="muted">Tất cả cấp quản trị có quyền; viewer cần được cấp riêng.</span></div><div id="syncStatusCard" class="sync-status-card ${status ? `sync-${esc(status.status)}` : ''}" aria-live="polite">${status ? `<strong>${esc(labelsByStatus[status.status] || 'Trạng thái')}</strong><p>${esc(status.message || '')}</p>${status.request_id ? `<small>Mã yêu cầu ${esc(status.request_id)}</small>` : ''}` : '<strong>Chưa có yêu cầu đồng bộ mới</strong><p>Bấm “Đồng bộ ngay” để gửi yêu cầu đến Apps Script.</p>'}</div></section>`;
 }
 function plFilesMarkup() {
   return state.plFiles.length ? `<div class="account-list">${state.plFiles.map((file) => `<div class="account-row pl-file-row"><b>${esc(file.project_code)}</b><span class="pl-file-name">${esc(file.source_file)}</span><span>${fmt(file.material_rows)} dòng PL · ${fmt(file.btp_rows)} dòng BTP</span><button class="button danger" type="button" data-delete-pl-file data-project="${esc(file.project_code)}" data-filename="${esc(file.source_file)}">Xóa file</button></div>`).join('')}</div>` : '<p class="muted">Chưa có file PL/BTP nào được nhập.</p>';
@@ -899,6 +1009,75 @@ function syncProjectFrozenColumnOffsets() {
       left += headerCells[index].getBoundingClientRect().width;
     }
   });
+}
+async function loadAccounts() {
+  const result = await api('/api/admin/users');
+  state.accounts = result.users || [];
+}
+function bindAccountManagement() {
+  const form = document.querySelector('#accountCreateForm');
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const data = new FormData(form); const output = document.querySelector('#accountCreateMessage'); const button = form.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const level = state.user?.admin_level === 'level1' ? 'level2' : String(data.get('admin_level') || 'none');
+      const result = await api('/api/admin/users', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({username:data.get('username'), password:data.get('password'), admin_level:level, can_sync:data.get('can_sync') === 'on'}) });
+      output.textContent = `Đã tạo ${result.user.username} · ${roleLabel(result.user.admin_level)}.`; output.className = 'form-message success-message'; form.reset();
+      await loadAccounts(); const list = document.querySelector('#managedAccountList'); if (list) list.innerHTML = accountListMarkup(); bindAccountListActions();
+    } catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; }
+    finally { button.disabled = false; }
+  });
+  bindAccountListActions();
+}
+function bindAccountListActions() {
+  document.querySelectorAll('[data-toggle-sync]').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const canSync = button.getAttribute('aria-pressed') !== 'true';
+      await api(`/api/admin/users/${encodeURIComponent(button.dataset.toggleSync)}`, {method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify({can_sync:canSync})});
+      await loadAccounts(); const list = document.querySelector('#managedAccountList'); if (list) list.innerHTML = accountListMarkup(); bindAccountListActions();
+    } catch (error) { window.alert(`Không đổi được quyền đồng bộ: ${error.message}`); button.disabled = false; }
+  }));
+  document.querySelectorAll('[data-delete-account]').forEach((button) => button.addEventListener('click', async () => {
+    const account = state.accounts.find((user) => user.id === button.dataset.deleteAccount);
+    if (!account || !window.confirm(`Xóa tài khoản “${account.username}”? Các phiên đăng nhập của tài khoản này sẽ bị thu hồi.`)) return;
+    button.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(account.id)}`, {method:'DELETE'});
+      await loadAccounts(); const list = document.querySelector('#managedAccountList'); if (list) list.innerHTML = accountListMarkup(); bindAccountListActions();
+    } catch (error) { window.alert(`Không xóa được tài khoản: ${error.message}`); button.disabled = false; }
+  }));
+}
+function renderSyncStatus() {
+  const card = document.querySelector('#syncStatusCard');
+  if (!card) return;
+  const status = state.syncStatus;
+  const labelsByStatus = {queued:'Đang chờ Apps Script',running:'Đang đồng bộ Drive',completed:'Đồng bộ hoàn tất',failed:'Đồng bộ gặp lỗi'};
+  card.className = `sync-status-card ${status ? `sync-${status.status}` : ''}`;
+  card.innerHTML = status ? `<strong>${esc(labelsByStatus[status.status] || 'Trạng thái')}</strong><p>${esc(status.message || (status.already_running ? 'Đang có yêu cầu đồng bộ hoạt động.' : 'Apps Script đã nhận yêu cầu.'))}</p>${status.request_id ? `<small>Mã yêu cầu ${esc(status.request_id)}</small>` : ''}` : '<strong>Chưa có yêu cầu đồng bộ mới</strong><p>Bấm “Đồng bộ ngay” để gửi yêu cầu đến Apps Script.</p>';
+}
+function bindSyncPage() {
+  const button = document.querySelector('#syncNowButton');
+  button?.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      state.syncStatus = await api('/api/data/refresh', {method:'POST', headers:{'content-type':'application/json'}, body:'{}'});
+      renderSyncStatus();
+      if (state.syncStatus.request_id && !['completed','failed'].includes(state.syncStatus.status)) pollSyncStatus(state.syncStatus.request_id);
+    } catch (error) {
+      state.syncStatus = {status:'failed', message:error.message}; renderSyncStatus();
+    } finally { button.disabled = false; }
+  });
+  renderSyncStatus();
+  if (state.syncStatus?.request_id && ['queued','running'].includes(state.syncStatus.status)) pollSyncStatus(state.syncStatus.request_id);
+}
+async function pollSyncStatus(requestId) {
+  if (state.page !== 'sync' || !ADMIN_MODE) return;
+  try {
+    const status = await api(`/api/data/refresh/${encodeURIComponent(requestId)}`);
+    state.syncStatus = { ...state.syncStatus, ...status };
+    renderSyncStatus();
+    if (['queued','running'].includes(status.status)) window.setTimeout(() => pollSyncStatus(requestId), 10000);
+  } catch (error) { state.syncStatus = {status:'failed', message:error.message, request_id:requestId}; renderSyncStatus(); }
 }
 function bindPage() {
   const pageRoot = document.querySelector('#page');
@@ -1470,11 +1649,8 @@ function bindPage() {
     }
     state.currentProject = link.dataset.project;
   }));
-  document.querySelector('#viewerForm')?.addEventListener('submit', async (event) => {
-    event.preventDefault(); const data = new FormData(event.currentTarget); const output = document.querySelector('#viewerMessage');
-    try { const result = await api('/api/admin/users',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:data.get('username'),password:data.get('password')})}); output.textContent = `Đã tạo tài khoản ${result.username}.`; output.className = 'form-message success-message'; event.currentTarget.reset(); }
-    catch (error) { output.textContent = error.message; output.className = 'form-message error-message'; }
-  });
+  if (state.page === 'accounts') bindAccountManagement();
+  if (state.page === 'sync') bindSyncPage();
   bindPlFileDeleteButtons();
   document.querySelector('#importForm')?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const output = document.querySelector('#importMessage'); const button = form.querySelector('button');
@@ -1780,6 +1956,9 @@ async function renderPage() {
   page.innerHTML = '<div class="loading-state"><span class="spinner"></span><p>Đang tải dữ liệu…</p></div>';
   try {
     if (state.page === 'overview') page.innerHTML = overviewPage();
+    else if (state.page === 'accounts') { await loadAccounts(); if (generation !== renderGeneration) return; page.innerHTML = accountsPage(); }
+    else if (state.page === 'sync') page.innerHTML = syncPage();
+    else if (state.page === 'admin') { await refreshPlFiles(); if (generation !== renderGeneration) return; page.innerHTML = adminPage(); }
     else if (['materials','materials-dashboard','projects-dashboard','projects'].includes(state.page)) {
       const availableProjects = ['projects','projects-dashboard'].includes(state.page)
         ? projectsForData('progress')
@@ -1790,10 +1969,6 @@ async function renderPage() {
       await loadPageData();
       if (generation !== renderGeneration) return;
       page.innerHTML = state.page === 'materials' ? materialsAuditPage() : state.page === 'materials-dashboard' ? materialDashboardPage() : state.page === 'projects-dashboard' ? projectDashboardPage() : projectsPage();
-    } else {
-      await refreshPlFiles();
-      if (generation !== renderGeneration) return;
-      page.innerHTML = adminPage();
     }
     bindPage();
   } catch (error) {
@@ -1802,9 +1977,13 @@ async function renderPage() {
 }
 async function navigate() {
   if (ADMIN_MODE) {
-    if (state.user?.role !== 'admin') { loginScreen(); return; }
-    const key = location.hash.replace(/^#\/?/, '') || 'admin';
-    state.page = ['overview','materials','materials-dashboard','projects-dashboard','projects','admin'].includes(key) ? key : 'admin';
+    if (!isPrivilegedFrontend(state.user)) { loginScreen(); return; }
+    const key = location.hash.replace(/^#\/?/, '') || (state.user?.capabilities?.can_manage_data ? 'admin' : state.user?.capabilities?.can_manage_accounts ? 'accounts' : 'overview');
+    const allowed = ['overview','materials','materials-dashboard','projects-dashboard','projects','admin','accounts','sync'];
+    state.page = allowed.includes(key) ? key : 'overview';
+    if (state.page === 'admin' && !state.user?.capabilities?.can_manage_data) state.page = state.user?.capabilities?.can_manage_accounts ? 'accounts' : 'overview';
+    if (state.page === 'accounts' && !state.user?.capabilities?.can_manage_accounts) state.page = state.user?.capabilities?.can_sync ? 'sync' : 'overview';
+    if (state.page === 'sync' && !state.user?.capabilities?.can_sync) state.page = 'overview';
     shell(); await renderPage();
     return;
   }
@@ -1817,7 +1996,7 @@ async function logout() {
     sessionStorage.removeItem('amecc-session-token'); state.user = null; state.plFiles = [];
     await refreshProjects().catch(() => {});
     if (ADMIN_MODE) loginScreen();
-    else await navigate();
+    else { shell(); await renderPage(); }
   }
 }
 async function initializeWorkspace() {
@@ -1832,10 +2011,13 @@ async function start() {
   if (ADMIN_MODE) {
     try {
       const result = await api('/api/auth/me');
-      state.user = result.user?.role === 'admin' ? result.user : null;
+      state.user = isPrivilegedFrontend(result.user) ? result.user : null;
       if (!state.user) sessionStorage.removeItem('amecc-session-token');
     } catch { state.user = null; }
     if (!state.user) { loginScreen(); return; }
+  } else {
+    try { state.user = (await api('/api/auth/me')).user || null; }
+    catch { state.user = null; }
   }
   try { await initializeWorkspace(); }
   catch (error) { app.innerHTML = `<main class="auth-screen"><section class="auth-card"><div class="auth-logo"><img src="./assets/logo.png" alt="AMECC"></div><h1>Không tải được dữ liệu</h1><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Thử lại</button></section></main>`; }

@@ -7,6 +7,8 @@
     "dev": "wrangler dev",
     "deploy:worker": "wrangler deploy",
     "serve:api": "node server/index.js",
+    "serve:ui": "node scripts/serve-local-ui.js",
+    "mock:mailer": "node scripts/mock-mailer.js",
     "drive-sync:bundle": "node scripts/build-drive-sync-parser.js",
     "db:restore:d1": "node scripts/restore-d1-backup.js",
     "db:import:supabase": "node scripts/migrate-sqlite-to-supabase.js",

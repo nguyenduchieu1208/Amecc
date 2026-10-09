@@ -98,6 +98,18 @@ function hasExtendedSchema(database) {
     && ['project_progress', 'project_progress_import_rows'].every((table) => columnsFor(database, table).has('shipment'));
 }
 
+function hasAccountAccessSchema(database) {
+  const tables = new Set(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
+  const users = columnsFor(database, 'users');
+  const refresh = tables.has('manual_refresh_state') ? columnsFor(database, 'manual_refresh_state') : new Set();
+  const triggers = new Set(database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all().map((row) => row.name));
+  return ['admin_level','can_sync','email','email_verified_at','owner_protected','is_active','created_by'].every((column) => users.has(column))
+    && ['password_recovery_codes','account_audit_logs'].every((table) => tables.has(table))
+    && refresh.has('requested_by')
+    && triggers.has('protect_amecc_owner_delete')
+    && triggers.has('protect_amecc_owner_privileges');
+}
+
 export function applyMigrations(database, migrationsDirectory = resolve(root, 'migrations')) {
   database.exec(`CREATE TABLE IF NOT EXISTS _amecc_migrations (
     filename TEXT PRIMARY KEY,
@@ -107,7 +119,7 @@ export function applyMigrations(database, migrationsDirectory = resolve(root, 'm
 
   // A D1 SQL export already has its complete schema but does not include the
   // local migration ledger. Detect that schema and record the matching files.
-  if (hasCurrentSchema(database) && hasExtendedSchema(database)) {
+  if (hasCurrentSchema(database) && hasExtendedSchema(database) && hasAccountAccessSchema(database)) {
     const record = database.prepare('INSERT OR IGNORE INTO _amecc_migrations (filename) VALUES (?)');
     const markCurrent = database.transaction(() => {
       for (const filename of migrationFiles) record.run(filename);
@@ -120,20 +132,20 @@ export function applyMigrations(database, migrationsDirectory = resolve(root, 'm
   if (!applied.size && hasCurrentSchema(database)) {
     const record = database.prepare('INSERT OR IGNORE INTO _amecc_migrations (filename) VALUES (?)');
     const markPreviousSchema = database.transaction(() => {
-      for (const filename of migrationFiles) if (filename !== '0008_material_notes_and_shipment.sql') record.run(filename);
+      for (const filename of migrationFiles) if (!['0008_material_notes_and_shipment.sql','0012_user_access_email.sql'].includes(filename)) record.run(filename);
     });
     markPreviousSchema();
-    for (const filename of migrationFiles) if (filename !== '0008_material_notes_and_shipment.sql') applied.add(filename);
+    for (const filename of migrationFiles) if (!['0008_material_notes_and_shipment.sql','0012_user_access_email.sql'].includes(filename)) applied.add(filename);
   }
   if (!applied.size && hasCurrentSchema(database, false)) {
     const record = database.prepare('INSERT OR IGNORE INTO _amecc_migrations (filename) VALUES (?)');
     const markPreviousSchema = database.transaction(() => {
       for (const filename of migrationFiles) {
-        if (filename !== '0007_project_import_staging.sql' && filename !== '0008_material_notes_and_shipment.sql') record.run(filename);
+        if (!['0007_project_import_staging.sql','0008_material_notes_and_shipment.sql','0012_user_access_email.sql'].includes(filename)) record.run(filename);
       }
     });
     markPreviousSchema();
-    for (const filename of migrationFiles) if (filename !== '0007_project_import_staging.sql' && filename !== '0008_material_notes_and_shipment.sql') applied.add(filename);
+    for (const filename of migrationFiles) if (!['0007_project_import_staging.sql','0008_material_notes_and_shipment.sql','0012_user_access_email.sql'].includes(filename)) applied.add(filename);
   }
   for (const filename of migrationFiles) {
     if (applied.has(filename)) continue;
@@ -182,6 +194,10 @@ export function createApiServer({ database, env = process.env, host = '0.0.0.0',
     DB: new SqliteD1Adapter(database),
     ALLOWED_ORIGIN: env.ALLOWED_ORIGIN || 'https://nguyenduchieu1208.github.io',
     ADMIN_SETUP_KEY: env.ADMIN_SETUP_KEY || '',
+    AUTH_CODE_PEPPER: env.AUTH_CODE_PEPPER || '',
+    AMECC_MAILER_URL: env.AMECC_MAILER_URL || '',
+    AMECC_MAILER_TOKEN: env.AMECC_MAILER_TOKEN || '',
+    MANUAL_REFRESH_COOLDOWN_SECONDS: env.MANUAL_REFRESH_COOLDOWN_SECONDS || '60',
     SESSION_TTL_SECONDS: env.SESSION_TTL_SECONDS || '28800',
     MAX_UPLOAD_BYTES: env.MAX_UPLOAD_BYTES || '10485760',
   };

@@ -208,7 +208,7 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(auditPage, /<section class="material-audit-controls[\s\S]*id="mobileAuditExtraFilters"[\s\S]*\$\{projectSelect\('materials'\)\}[\s\S]*id="materialSheetDropdown"/);
   assert.match(styles, /\.audit-filter-grid select,\.sheet-multi-select>summary\{width:100%;min-width:0/);
   assert.match(app, /function auditBtpTableRowMarkup\(row, query = ''\)/);
-  assert.match(app, /function auditBomGroupMarkup\(\{ rows, detailRows = rows, query = '' \}\)/);
+  assert.match(app, /function auditBomGroupMarkup\(\{ key, rows, detailRows = rows, query = '' \}\)/);
   assert.match(app, /const contextRows = search \? filteredMaterialAuditRows\(\{ options, includeSearch:false \}\) : visibleRows/);
   assert.match(app, /const allGroups = auditBomGroups\(visibleRows, contextRows, search\)/);
   assert.match(app, /function usableBtpRows\(\)[\s\S]*isPurchasingMaterialSheet\(row\.source_sheet\)[\s\S]*hasBtpIdentity\(row\)/);
@@ -216,7 +216,7 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(app, /allGroups\.slice\(pageIndex \* pageSize, \(pageIndex \+ 1\) \* pageSize\)/);
   assert.match(app, /search-match-row/);
   assert.match(enhancements, /\.bom-btp-table tbody tr\.search-match-row td/);
-  assert.match(enhancements, /\.bom-btp-group\[open\] \.bom-search-match-preview-wrap \{ display:none; \}/);
+  assert.match(enhancements, /\.bom-btp-group\.is-expanded \.bom-search-match-preview-wrap \{ display:none; \}/);
   assert.match(enhancements, /\.sheet-check-option input \{ grid-column:1; grid-row:1\/3;/);
   assert.match(enhancements, /\.material-audit-controls \{ position:sticky; top:72px; z-index:11;/);
   assert.match(enhancements, /\.mobile-audit-extra-filters \{ display:none; \}[\s\S]*\.mobile-expanded \.mobile-audit-extra-filters \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\); grid-template-areas:"project sheet" "lot date" "unit status" "export export"/);
@@ -224,8 +224,8 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(enhancements, /\.audit-search input \{ min-width:0; min-height:42px; font-size:16px!important/);
   assert.match(app, /id="toggleMobileAuditFilters"[\s\S]*aria-controls="mobileAuditExtraFilters"/);
   assert.match(app, /querySelector\('#toggleMobileAuditFilters'\)\?\.addEventListener\('click',[\s\S]*materialMobileFiltersOpen = !state\.materialMobileFiltersOpen/);
-  assert.match(app, /<details class="bom-btp-group">/);
-  assert.match(app, /<summary class="bom-btp-group-summary">[\s\S]*<div class="bom-btp-table-wrap"><table class="bom-btp-table">/);
+  assert.match(app, /<article class="bom-btp-group/);
+  assert.match(app, /<button class="bom-btp-group-summary"[\s\S]*<div class="bom-btp-table-wrap" \$\{expanded \? '' : 'hidden'\}><table class="bom-btp-table">/);
   assert.match(app, /event\.replace\(\/:\\s\*\/, ': '\)/);
   assert.match(app, /\$\{progress\.toFixed\(1\)\}%/);
   assert.ok(app.includes('BTP con') && app.includes('bom-group-progress'));
@@ -252,9 +252,9 @@ test('BTP view uses expandable BOM cards with the requested detail table and sep
   assert.match(auditPage, /state\.progressData\?\.rows/);
   assert.match(styles, /\.material-audit-controls\{position:sticky;top:82px/);
   assert.match(app, /ADMIN_MODE\)[\s\S]*const key = location\.hash\.replace\(\/\^#\\\/?\//);
-  assert.match(app, /\['overview','materials','materials-dashboard','projects-dashboard','projects','admin'\]\.includes\(key\) \? key : 'admin'/);
+  assert.match(app, /const allowed = \['overview','materials','materials-dashboard','projects-dashboard','projects','admin','accounts','sync'\]/);
   const shellSource = app.slice(app.indexOf('function shell()'), app.indexOf('function statCard('));
-  assert.doesNotMatch(shellSource, /href="[^\"]*admin/);
+  assert.match(shellSource, /href="#accounts"/);
   assert.match(app, /href="#materials-dashboard">Dashboard BOM &amp; vật tư/);
   assert.match(styles, /\.bom-btp-table th:first-child,\.bom-btp-table td:first-child\{position:sticky;left:0/);
   assert.match(styles, /@media\(max-width:580px\)[\s\S]*\.bom-btp-table\{min-width:1280px\}/);
@@ -549,10 +549,10 @@ test('PL staging chunks stay within D1 parameter limit and commit is atomic', as
   const btpMigration = readFileSync('migrations/0004_btp_materials.sql', 'utf8');
   const btpWeightMigration = readFileSync('migrations/0005_btp_unit_weight.sql', 'utf8');
   const btpDetailsMigration = readFileSync('migrations/0006_btp_bom_details.sql', 'utf8');
-  assert.equal(__test__.MATERIAL_CHUNK_SIZE, 500);
+  assert.equal(__test__.MATERIAL_CHUNK_SIZE, 1500);
   assert.ok(__test__.MATERIAL_INSERT_ROWS_PER_STATEMENT * (__test__.MATERIAL_IMPORT_COLUMNS.length + 2) + 4 <= 100,
     'chunk inserts must stay below 100 bound parameters per statement');
-  assert.ok(__test__.MATERIAL_COMMIT_BATCH_SIZE >= __test__.MATERIAL_CHUNK_SIZE);
+  assert.equal(__test__.MATERIAL_COMMIT_BATCH_SIZE, 500);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS material_imports/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS material_import_rows/);
   assert.match(dateMigration, /ALTER TABLE materials ADD COLUMN delivery_date TEXT/);

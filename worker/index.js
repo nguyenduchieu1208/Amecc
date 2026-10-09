@@ -90,7 +90,7 @@ function corsHeaders(request, env) {
   return {
     'access-control-allow-origin': origin,
     'access-control-allow-credentials': 'true',
-    'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization,apikey',
     'vary': 'Origin',
   };
@@ -279,10 +279,33 @@ async function currentUser(request, env) {
   if (!token) return null;
   const tokenHash = await sha256(token);
   const session = await env.DB.prepare(
-    'SELECT users.id, users.username, users.role FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token_hash = ? AND sessions.expires_at > ?'
+    `SELECT users.id, users.username, users.role, users.admin_level, users.can_sync,
+      users.email, users.email_verified_at, users.owner_protected, users.is_active
+     FROM sessions JOIN users ON users.id = sessions.user_id
+     WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.is_active = 1`
   ).bind(tokenHash, Math.floor(Date.now() / 1000)).first();
   return session || null;
 }
+
+function publicUser(user) {
+  if (!user) return null;
+  const level = user.admin_level || 'none';
+  const privileged = ['superadmin', 'level1', 'level2'].includes(level);
+  return {
+    id:user.id, username:user.username, role:user.role, admin_level:level,
+    can_sync:Boolean(user.can_sync) || privileged, email:user.email || null,
+    email_verified_at:user.email_verified_at || null, owner_protected:Boolean(user.owner_protected),
+    capabilities:{
+      can_sync:Boolean(user.can_sync) || privileged,
+      can_manage_accounts:['superadmin','level1'].includes(level),
+      can_manage_data:level === 'superadmin',
+      can_issue_level1:level === 'superadmin',
+    },
+  };
+}
+
+function accountLevel(user) { return user?.admin_level || 'none'; }
+function isPrivileged(user) { return ['superadmin','level1','level2'].includes(accountLevel(user)); }
 
 async function requireUser(request, env) {
   const user = await currentUser(request, env);
@@ -292,8 +315,25 @@ async function requireUser(request, env) {
 
 async function requireAdmin(request, env) {
   const user = await requireUser(request, env);
-  if (user.role !== 'admin') throw new HttpError(403, 'Chỉ admin được phép tải dữ liệu lên.');
+  if (accountLevel(user) !== 'superadmin') throw new HttpError(403, 'Chỉ chủ quản trị được phép thay đổi dữ liệu.');
   return user;
+}
+
+async function requireAccountManager(request, env) {
+  const user = await requireUser(request, env);
+  if (!['superadmin','level1'].includes(accountLevel(user))) throw new HttpError(403, 'Tài khoản này không có quyền cấp tài khoản.');
+  return user;
+}
+
+async function requireSyncPermission(request, env) {
+  const user = await requireUser(request, env);
+  if (!isPrivileged(user) && !Boolean(user.can_sync)) throw new HttpError(403, 'Tài khoản chưa được cấp quyền đồng bộ dữ liệu.');
+  return user;
+}
+
+async function recordAccountAudit(env, actorId, action, targetUserId = null, details = null) {
+  await env.DB.prepare('INSERT INTO account_audit_logs (id, actor_id, action, target_user_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), actorId || null, action, targetUserId, details ? JSON.stringify(details) : null, Math.floor(Date.now() / 1000)).run();
 }
 
 async function requireDriveSync(request, env) {
@@ -305,11 +345,7 @@ async function requireDriveSync(request, env) {
 }
 
 async function authorizeManualDataRefresh(request, env) {
-  const refreshPassword = String(env.AMECC_REFRESH_PASSWORD || '');
-  if (refreshPassword.length < 8) throw new HttpError(503, 'Chưa cấu hình mật khẩu làm mới dữ liệu trên máy chủ.');
-  const body = await request.json().catch(() => null);
-  const providedPassword = String(body?.password || '');
-  if (!constantTimeEqual(providedPassword, refreshPassword)) throw new HttpError(401, 'Mật khẩu làm mới không đúng.');
+  const user = await requireSyncPermission(request, env);
 
   const configuredCooldown = Number(env.MANUAL_REFRESH_COOLDOWN_SECONDS);
   const cooldownSeconds = Number.isFinite(configuredCooldown)
@@ -319,8 +355,8 @@ async function authorizeManualDataRefresh(request, env) {
   const requestId = crypto.randomUUID();
   const allowed = await env.DB.prepare(`
     INSERT INTO manual_refresh_state
-      (id, last_refresh_at, request_id, refresh_status, requested_at, started_at, completed_at, refresh_message)
-    VALUES ('workspace', ?, ?, 'queued', ?, NULL, NULL, 'Đã xếp hàng chờ Apps Script đồng bộ Drive.')
+      (id, last_refresh_at, request_id, refresh_status, requested_at, started_at, completed_at, refresh_message, requested_by)
+    VALUES ('workspace', ?, ?, 'queued', ?, NULL, NULL, 'Đã xếp hàng chờ Apps Script đồng bộ Drive.', ?)
     ON CONFLICT(id) DO UPDATE SET
       last_refresh_at = excluded.last_refresh_at,
       request_id = excluded.request_id,
@@ -328,11 +364,12 @@ async function authorizeManualDataRefresh(request, env) {
       requested_at = excluded.requested_at,
       started_at = NULL,
       completed_at = NULL,
-      refresh_message = excluded.refresh_message
+      refresh_message = excluded.refresh_message,
+      requested_by = excluded.requested_by
     WHERE manual_refresh_state.last_refresh_at <= ?
       AND COALESCE(manual_refresh_state.refresh_status, '') NOT IN ('queued', 'running')
     RETURNING request_id, refresh_status, requested_at
-  `).bind(now, requestId, now, now - cooldownSeconds).first();
+  `).bind(now, requestId, now, user.id, now - cooldownSeconds).first();
 
   if (!allowed) {
     const previous = await env.DB.prepare('SELECT last_refresh_at, refresh_status FROM manual_refresh_state WHERE id = ?').bind('workspace').first();
@@ -346,13 +383,15 @@ async function authorizeManualDataRefresh(request, env) {
   return json({ ok:true, request_id:allowed.request_id, status:allowed.refresh_status, cooldown_seconds:cooldownSeconds, poll_interval_seconds:10 });
 }
 
-async function getManualDataRefreshStatus(requestId, env) {
+async function getManualDataRefreshStatus(requestId, request, env) {
+  await requireSyncPermission(request, env);
   if (!/^[0-9a-f-]{36}$/i.test(requestId)) throw new HttpError(400, 'Mã yêu cầu làm mới không hợp lệ.');
   const status = await env.DB.prepare(`
-    SELECT request_id, refresh_status AS status, requested_at, started_at, completed_at, refresh_message AS message
+    SELECT request_id, refresh_status AS status, requested_at, started_at, completed_at, refresh_message AS message, requested_by
     FROM manual_refresh_state WHERE id = ? AND request_id = ?
   `).bind('workspace', requestId).first();
   if (!status) throw new HttpError(404, 'Không tìm thấy yêu cầu đồng bộ Drive này.');
+  delete status.requested_by;
   return json(status);
 }
 
@@ -406,20 +445,26 @@ async function updateDriveRefreshRequest(request, env, action) {
 
 async function login(request, env) {
   const body = await request.json().catch(() => null);
-  const username = String(body?.username || '').trim().toLowerCase();
+  const identity = String(body?.login || body?.username || '').trim().toLowerCase();
   const password = String(body?.password || '');
-  if (!/^[a-z0-9._-]{3,64}$/.test(username) || password.length < 8 || password.length > 256) {
-    throw new HttpError(400, 'Tên đăng nhập hoặc mật khẩu không hợp lệ.');
+  const isUsername = /^[a-z0-9._-]{3,64}$/.test(identity);
+  const isEmail = identity.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity);
+  if ((!isUsername && !isEmail) || password.length < 8 || password.length > 256) {
+    throw new HttpError(400, 'Tên đăng nhập/email hoặc mật khẩu không hợp lệ.');
   }
-  const user = await env.DB.prepare('SELECT id, username, password_hash, role FROM users WHERE username = ?').bind(username).first();
+  const userColumns = 'SELECT id, username, password_hash, role, admin_level, can_sync, email, email_verified_at, owner_protected, is_active FROM users';
+  const user = isUsername
+    ? await env.DB.prepare(`${userColumns} WHERE username = ?`).bind(identity).first()
+    : await env.DB.prepare(`${userColumns} WHERE LOWER(email) = ?`).bind(identity).first();
   if (!user) throw new HttpError(401, 'Sai tên đăng nhập hoặc mật khẩu.');
+  if (!Boolean(user.is_active)) throw new HttpError(401, 'Tài khoản đã bị khóa.');
   const [salt, savedHash] = user.password_hash.split(':');
   const actualHash = await passwordHash(password, salt);
   if (!constantTimeEqual(actualHash, savedHash)) throw new HttpError(401, 'Sai tên đăng nhập hoặc mật khẩu.');
   const token = bytesToBase64(crypto.getRandomValues(new Uint8Array(32))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
   const expires = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
   await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').bind(await sha256(token), user.id, expires).run();
-  return json({ token, user: { id: user.id, username: user.username, role: user.role } });
+  return json({ token, user: publicUser(user) });
 }
 
 async function setupFirstAdmin(request, env) {
@@ -428,37 +473,244 @@ async function setupFirstAdmin(request, env) {
   if (!constantTimeEqual(String(body?.setup_key || ''), env.ADMIN_SETUP_KEY)) {
     throw new HttpError(403, 'Khóa khởi tạo không hợp lệ.');
   }
-  const count = await env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'").first();
-  if (Number(count?.total || 0) > 0) throw new HttpError(409, 'Admin ban đầu đã được tạo.');
-  const username = String(body?.username || '').trim().toLowerCase();
+  const count = await env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE admin_level = 'superadmin'").first();
+  const hasOwner = Number(count?.total || 0) > 0;
+  const owner = hasOwner
+    ? await env.DB.prepare("SELECT id, username, email, owner_protected, is_active FROM users WHERE admin_level = 'superadmin' AND owner_protected = 1 LIMIT 1").first()
+    : null;
+  if (hasOwner && (!owner || owner.email || !Boolean(owner.is_active))) {
+    throw new HttpError(409, 'Admin ban đầu đã được khởi tạo hoặc không thể xác nhận tài khoản chủ.');
+  }
+  const email = body?.email ? validEmail(body.email) : null;
+  if (hasOwner && !email) throw new HttpError(400, 'Cần cung cấp email để khởi tạo tài khoản chủ.');
+  const username = owner?.username || String(body?.username || email?.split('@')[0] || '').trim().toLowerCase();
   const password = String(body?.password || '');
   if (!/^[a-z0-9._-]{3,64}$/.test(username) || password.length < 12 || password.length > 256) {
     throw new HttpError(400, 'Tên đăng nhập không hợp lệ hoặc mật khẩu admin ngắn hơn 12 ký tự.');
   }
+  const usernameCollision = await env.DB.prepare('SELECT id FROM users WHERE LOWER(username) = ? AND id <> ?').bind(username, owner?.id || '').first();
+  if (usernameCollision) throw new HttpError(409, 'Tên đăng nhập này đã được sử dụng.');
+  if (email) {
+    const collision = await env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = ? AND id <> ?').bind(email, owner?.id || '').first();
+    if (collision) throw new HttpError(409, 'Email này đã được liên kết với một tài khoản khác.');
+  }
   const salt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
   const hash = await passwordHash(password, salt);
-  await env.DB.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
-    .bind(crypto.randomUUID(), username, `${salt}:${hash}`, 'admin').run();
-  return json({ created: true, username, role: 'admin' }, 201);
+  if (owner) {
+    const claimed = await env.DB.prepare(`UPDATE users SET password_hash = ?, email = ?, email_verified_at = NULL
+      WHERE id = ? AND owner_protected = 1 AND admin_level = 'superadmin' AND email IS NULL AND is_active = 1
+      RETURNING id`).bind(`${salt}:${hash}`, email, owner.id).first();
+    if (!claimed) throw new HttpError(409, 'Tài khoản chủ đã được khởi tạo ở một phiên khác.');
+    await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(owner.id).run();
+    return json({ created:true, claimed_existing_owner:true, username:owner.username, email, role:'admin', admin_level:'superadmin' }, 201);
+  }
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO users (id, username, password_hash, role, admin_level, can_sync, email, owner_protected, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, username, `${salt}:${hash}`, 'admin', 'superadmin', 1, email, 1, 1).run();
+  return json({ created:true, username, email, role:'admin', admin_level:'superadmin' }, 201);
 }
 
-async function createViewer(request, env) {
-  await requireAdmin(request, env);
+async function createAccount(request, env) {
+  const actor = await requireAccountManager(request, env);
   const body = await request.json().catch(() => null);
   const username = String(body?.username || '').trim().toLowerCase();
   const password = String(body?.password || '');
   if (!/^[a-z0-9._-]{3,64}$/.test(username) || password.length < 12 || password.length > 256) {
     throw new HttpError(400, 'Tên đăng nhập không hợp lệ hoặc mật khẩu cần ít nhất 12 ký tự.');
   }
+  const requestedLevel = String(body?.admin_level || 'none');
+  const allowedLevels = accountLevel(actor) === 'superadmin' ? ['none','level1','level2'] : ['level2'];
+  if (!allowedLevels.includes(requestedLevel)) throw new HttpError(403, accountLevel(actor) === 'level1' ? 'Level 1 chỉ được cấp tài khoản Level 2.' : 'Không thể cấp quyền này.');
+  const role = requestedLevel === 'none' ? 'viewer' : 'admin';
+  const canSync = requestedLevel !== 'none' || (accountLevel(actor) === 'superadmin' && Boolean(body?.can_sync));
   const salt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
   const hash = await passwordHash(password, salt);
+  const id = crypto.randomUUID();
   try {
-    await env.DB.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
-      .bind(crypto.randomUUID(), username, `${salt}:${hash}`, 'viewer').run();
+    await env.DB.prepare('INSERT INTO users (id, username, password_hash, role, admin_level, can_sync, owner_protected, is_active, created_by) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?)')
+      .bind(id, username, `${salt}:${hash}`, role, requestedLevel, canSync ? 1 : 0, actor.id).run();
   } catch {
     throw new HttpError(409, 'Tên đăng nhập đã tồn tại.');
   }
-  return json({ created: true, username, role: 'viewer' }, 201);
+  await recordAccountAudit(env, actor.id, 'account_created', id, { username, admin_level:requestedLevel, can_sync:canSync });
+  return json({ created:true, user:{ id, username, role, admin_level:requestedLevel, can_sync:canSync, created_by:actor.id } }, 201);
+}
+
+async function listAccounts(request, env) {
+  const actor = await requireAccountManager(request, env);
+  const { results } = await env.DB.prepare(`
+    SELECT id, username, role, admin_level, can_sync, email, email_verified_at,
+      owner_protected, is_active, created_by, created_at
+    FROM users ORDER BY owner_protected DESC, admin_level, username
+  `).all();
+  return json({ users:results.map((user) => ({ ...user, can_sync:Boolean(user.can_sync), owner_protected:Boolean(user.owner_protected), is_active:Boolean(user.is_active), can_manage:Boolean(actor.admin_level === 'superadmin' || user.created_by === actor.id) })) });
+}
+
+async function updateAccount(request, env, userId) {
+  const actor = await requireAccountManager(request, env);
+  const target = await env.DB.prepare('SELECT id, username, admin_level, role, owner_protected, can_sync FROM users WHERE id = ?').bind(userId).first();
+  if (!target) throw new HttpError(404, 'Không tìm thấy tài khoản.');
+  if (Boolean(target.owner_protected)) throw new HttpError(403, 'Không thể thay đổi tài khoản chủ hệ thống.');
+  if (accountLevel(actor) === 'level1' && target.admin_level !== 'none') throw new HttpError(403, 'Level 1 chỉ được phân quyền đồng bộ cho tài khoản viewer.');
+  const body = await request.json().catch(() => null);
+  if (typeof body?.can_sync !== 'boolean' || target.role !== 'viewer') throw new HttpError(400, 'Chỉ có thể bật hoặc tắt quyền đồng bộ cho viewer.');
+  await env.DB.prepare('UPDATE users SET can_sync = ? WHERE id = ? AND owner_protected = 0').bind(body.can_sync ? 1 : 0, userId).run();
+  await recordAccountAudit(env, actor.id, 'sync_permission_changed', userId, { can_sync:body.can_sync });
+  return json({ updated:true, id:userId, can_sync:body.can_sync });
+}
+
+async function deleteAccount(request, env, userId) {
+  const actor = await requireUser(request, env);
+  if (accountLevel(actor) !== 'superadmin') throw new HttpError(403, 'Chỉ chủ quản trị được xóa tài khoản.');
+  const target = await env.DB.prepare('SELECT id, username, owner_protected FROM users WHERE id = ?').bind(userId).first();
+  if (!target) throw new HttpError(404, 'Không tìm thấy tài khoản.');
+  if (Boolean(target.owner_protected)) throw new HttpError(403, 'Không thể xóa tài khoản chủ hệ thống.');
+  await recordAccountAudit(env, actor.id, 'account_deleted', userId, { username:target.username });
+  await env.DB.prepare('DELETE FROM users WHERE id = ? AND owner_protected = 0').bind(userId).run();
+  return json({ deleted:true, id:userId });
+}
+
+function validEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Địa chỉ email không hợp lệ.');
+  return email;
+}
+
+function requireMailer(env) {
+  if (!env.AMECC_MAILER_URL || !env.AMECC_MAILER_TOKEN || !env.AUTH_CODE_PEPPER) {
+    throw new HttpError(503, 'Chưa cấu hình dịch vụ gửi email an toàn trên máy chủ.');
+  }
+}
+
+async function sendOwnerMail(env, to, subject, code, purpose) {
+  requireMailer(env);
+  const recovery = purpose === 'password_reset';
+  const action = recovery ? 'đặt lại mật khẩu' : 'xác minh địa chỉ email';
+  const text = `Mã ${action} AMECC của bạn là ${code}. Mã có hiệu lực trong 10 phút. Nếu bạn không yêu cầu, hãy bỏ qua email này.`;
+  const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#172b45"><h2>AMECC · ${recovery ? 'Đặt lại mật khẩu' : 'Xác minh email'}</h2><p>Mã ${action} của bạn:</p><p style="font-size:30px;font-weight:700;letter-spacing:8px">${code}</p><p>Mã có hiệu lực trong 10 phút. Nếu bạn không yêu cầu, hãy bỏ qua email này.</p></div>`;
+  const response = await fetch(env.AMECC_MAILER_URL, {
+    method:'POST', headers:{ 'content-type':'application/json', authorization:`Bearer ${env.AMECC_MAILER_TOKEN}` },
+    body:JSON.stringify({ token:env.AMECC_MAILER_TOKEN, to, subject:`AMECC · ${recovery ? 'Mã đặt lại mật khẩu' : 'Mã xác minh email'}`, text, html }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.sent !== true) throw new HttpError(502, 'Không gửi được email. Hãy kiểm tra cấu hình gửi thư rồi thử lại.');
+}
+
+function makeOtp() { return String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0'); }
+async function issueRecoveryCode(env, user, email, purpose) {
+  const now = Math.floor(Date.now() / 1000);
+  const previous = await env.DB.prepare('SELECT created_at FROM password_recovery_codes WHERE user_id = ? AND purpose = ? ORDER BY created_at DESC LIMIT 1').bind(user.id, purpose).first();
+  if (previous && now - Number(previous.created_at) < 60) throw new HttpError(429, 'Vui lòng chờ 60 giây trước khi yêu cầu mã mới.');
+  const code = makeOtp();
+  const codeHash = await sha256(`${env.AUTH_CODE_PEPPER}:${purpose}:${user.id}:${code}`);
+  await env.DB.prepare('UPDATE password_recovery_codes SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL').bind(now, user.id, purpose).run();
+  await env.DB.prepare('INSERT INTO password_recovery_codes (id, user_id, purpose, target_email, code_hash, expires_at, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)')
+    .bind(crypto.randomUUID(), user.id, purpose, email, codeHash, now + 600, now).run();
+  try { await sendOwnerMail(env, email, '', code, purpose); }
+  catch (error) {
+    await env.DB.prepare('UPDATE password_recovery_codes SET used_at = ? WHERE user_id = ? AND purpose = ? AND created_at = ?').bind(now, user.id, purpose, now).run();
+    throw error;
+  }
+}
+
+async function requestEmailVerification(request, env) {
+  const actor = await requireUser(request, env);
+  const body = await request.json().catch(() => null);
+  const email = validEmail(body?.email);
+  const collision = await env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = ? AND id <> ?').bind(email, actor.id).first();
+  if (collision) throw new HttpError(409, 'Email này đã được liên kết với một tài khoản khác.');
+  await issueRecoveryCode(env, actor, email, 'email_verify');
+  return json({ sent:true, message:'Đã gửi mã xác minh đến email của bạn.' });
+}
+
+async function verifyEmail(request, env) {
+  const actor = await requireUser(request, env);
+  const body = await request.json().catch(() => null);
+  const code = String(body?.code || '').trim();
+  if (!/^\d{6}$/.test(code)) throw new HttpError(400, 'Mã xác minh phải gồm 6 chữ số.');
+  const now = Math.floor(Date.now() / 1000);
+  const challenge = await env.DB.prepare(`SELECT id, target_email, code_hash, expires_at, attempts FROM password_recovery_codes
+    WHERE user_id = ? AND purpose = 'email_verify' AND used_at IS NULL ORDER BY created_at DESC LIMIT 1`).bind(actor.id).first();
+  if (!challenge || Number(challenge.expires_at) <= now || Number(challenge.attempts) >= 5) throw new HttpError(400, 'Mã xác minh đã hết hạn hoặc không còn hiệu lực.');
+  const expected = await sha256(`${env.AUTH_CODE_PEPPER}:${'email_verify'}:${actor.id}:${code}`);
+  if (!constantTimeEqual(expected, challenge.code_hash)) {
+    await env.DB.prepare('UPDATE password_recovery_codes SET attempts = attempts + 1 WHERE id = ?').bind(challenge.id).run();
+    throw new HttpError(400, 'Mã xác minh không đúng.');
+  }
+  const collision = await env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = ? AND id <> ?').bind(challenge.target_email, actor.id).first();
+  if (collision) throw new HttpError(409, 'Email này đã được liên kết với một tài khoản khác.');
+  const consumed = await env.DB.prepare(`UPDATE password_recovery_codes SET used_at = ?
+    WHERE id = ? AND used_at IS NULL AND expires_at > ? AND attempts < 5 AND code_hash = ? RETURNING id`)
+    .bind(now, challenge.id, now, expected).first();
+  if (!consumed) throw new HttpError(400, 'Mã xác minh đã hết hạn hoặc đã được sử dụng.');
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET email = ?, email_verified_at = ? WHERE id = ?').bind(challenge.target_email, now, actor.id),
+  ]);
+  await recordAccountAudit(env, actor.id, 'email_verified', actor.id);
+  return json({ verified:true, user:publicUser({ ...actor, email:challenge.target_email, email_verified_at:now }) });
+}
+
+async function requestPasswordReset(request, env) {
+  requireMailer(env);
+  const body = await request.json().catch(() => null);
+  const email = validEmail(body?.email);
+  const user = await env.DB.prepare('SELECT id, email FROM users WHERE LOWER(email) = ? AND email_verified_at IS NOT NULL AND is_active = 1').bind(email).first();
+  if (user) await issueRecoveryCode(env, user, email, 'password_reset');
+  return json({ sent:true, message:'Nếu email đã được xác minh trong hệ thống, mã đặt lại sẽ được gửi đến hộp thư.' });
+}
+
+async function confirmPasswordReset(request, env) {
+  const body = await request.json().catch(() => null);
+  const email = validEmail(body?.email);
+  const code = String(body?.code || '').trim();
+  const password = String(body?.password || '');
+  if (!/^\d{6}$/.test(code) || password.length < 12 || password.length > 256) throw new HttpError(400, 'Mã không hợp lệ hoặc mật khẩu mới cần ít nhất 12 ký tự.');
+  const user = await env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = ? AND email_verified_at IS NOT NULL AND is_active = 1').bind(email).first();
+  const now = Math.floor(Date.now() / 1000);
+  if (!user) throw new HttpError(400, 'Mã đặt lại không hợp lệ hoặc đã hết hạn.');
+  const challenge = await env.DB.prepare(`SELECT id, code_hash, expires_at, attempts FROM password_recovery_codes
+    WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL ORDER BY created_at DESC LIMIT 1`).bind(user.id).first();
+  if (!challenge || Number(challenge.expires_at) <= now || Number(challenge.attempts) >= 5) throw new HttpError(400, 'Mã đặt lại không hợp lệ hoặc đã hết hạn.');
+  const expected = await sha256(`${env.AUTH_CODE_PEPPER}:password_reset:${user.id}:${code}`);
+  if (!constantTimeEqual(expected, challenge.code_hash)) {
+    await env.DB.prepare('UPDATE password_recovery_codes SET attempts = attempts + 1 WHERE id = ?').bind(challenge.id).run();
+    throw new HttpError(400, 'Mã đặt lại không hợp lệ hoặc đã hết hạn.');
+  }
+  const salt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
+  const hash = await passwordHash(password, salt);
+  const consumed = await env.DB.prepare(`UPDATE password_recovery_codes SET used_at = ?
+    WHERE id = ? AND used_at IS NULL AND expires_at > ? AND attempts < 5 AND code_hash = ? RETURNING id`)
+    .bind(now, challenge.id, now, expected).first();
+  if (!consumed) throw new HttpError(400, 'Mã đặt lại không hợp lệ hoặc đã hết hạn.');
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(`${salt}:${hash}`, user.id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
+  ]);
+  await recordAccountAudit(env, user.id, 'password_reset', user.id);
+  return json({ reset:true, message:'Đã đổi mật khẩu. Hãy đăng nhập lại.' });
+}
+
+async function changeOwnPassword(request, env) {
+  const actor = await requireUser(request, env);
+  const body = await request.json().catch(() => null);
+  const currentPassword = String(body?.current_password || '');
+  const newPassword = String(body?.new_password || '');
+  if (newPassword.length < 12 || newPassword.length > 256) throw new HttpError(400, 'Mật khẩu mới cần từ 12 đến 256 ký tự.');
+  const record = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(actor.id).first();
+  const [salt, savedHash] = String(record?.password_hash || ':').split(':');
+  const actualHash = await passwordHash(currentPassword, salt);
+  if (!constantTimeEqual(actualHash, savedHash)) throw new HttpError(401, 'Mật khẩu hiện tại không đúng.');
+  const nextSalt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
+  const nextHash = await passwordHash(newPassword, nextSalt);
+  const authorization = request.headers.get('Authorization') || '';
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1] || cookieValue(request, 'amecc_session');
+  const currentHash = token ? await sha256(token) : '';
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(`${nextSalt}:${nextHash}`, actor.id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').bind(actor.id, currentHash),
+  ]);
+  await recordAccountAudit(env, actor.id, 'password_changed', actor.id);
+  return json({ changed:true, message:'Đã đổi mật khẩu.' });
 }
 
 async function logout(request, env) {
@@ -947,12 +1199,17 @@ async function route(request, env) {
   if (request.method === 'POST' && path === '/api/auth/setup') return setupFirstAdmin(request, env);
   if (request.method === 'POST' && path === '/api/auth/login') return login(request, env);
   if (request.method === 'POST' && path === '/api/auth/logout') return logout(request, env);
+  if (request.method === 'POST' && path === '/api/auth/password/change') return changeOwnPassword(request, env);
+  if (request.method === 'POST' && path === '/api/auth/email/request') return requestEmailVerification(request, env);
+  if (request.method === 'POST' && path === '/api/auth/email/verify') return verifyEmail(request, env);
+  if (request.method === 'POST' && path === '/api/auth/password/forgot') return requestPasswordReset(request, env);
+  if (request.method === 'POST' && path === '/api/auth/password/reset') return confirmPasswordReset(request, env);
   if (request.method === 'POST' && path === '/api/data/refresh') return authorizeManualDataRefresh(request, env);
   const refreshStatusMatch = path.match(/^\/api\/data\/refresh\/([0-9a-f-]{36})$/i);
-  if (request.method === 'GET' && refreshStatusMatch) return getManualDataRefreshStatus(refreshStatusMatch[1], env);
+  if (request.method === 'GET' && refreshStatusMatch) return getManualDataRefreshStatus(refreshStatusMatch[1], request, env);
   if (request.method === 'GET' && path === '/api/auth/me') {
     const user = await currentUser(request, env);
-    return json({ user: user ? { id: user.id, username: user.username, role: user.role } : null });
+    return json({ user:publicUser(user) });
   }
   if (request.method === 'GET' && path === '/api/admin/drive-sync/refresh-request') return getDriveRefreshRequest(request, env);
   if (request.method === 'POST' && path === '/api/admin/drive-sync/refresh-start') return updateDriveRefreshRequest(request, env, 'start');
@@ -971,7 +1228,11 @@ async function route(request, env) {
     return json({ files: await listPlFiles(env) });
   }
   if (request.method === 'DELETE' && path === '/api/admin/pl-files') return deletePlFile(request, env);
-  if (request.method === 'POST' && path === '/api/admin/users') return createViewer(request, env);
+  if (request.method === 'GET' && path === '/api/admin/users') return listAccounts(request, env);
+  if (request.method === 'POST' && path === '/api/admin/users') return createAccount(request, env);
+  const userMatch = path.match(/^\/api\/admin\/users\/([0-9a-f-]{36})$/i);
+  if (request.method === 'PATCH' && userMatch) return updateAccount(request, env, userMatch[1]);
+  if (request.method === 'DELETE' && userMatch) return deleteAccount(request, env, userMatch[1]);
   if (request.method === 'POST' && path === '/api/admin/import/materials') return importMaterials(request, env);
   if (request.method === 'POST' && path === '/api/admin/import/projects') return importWorkbook(request, env, 'projects');
   const materialMatch = path.match(/^\/api\/projects\/([A-Za-z0-9_-]{2,32})\/materials$/);

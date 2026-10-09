@@ -61,11 +61,15 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     database.exec(readFileSync('migrations/0006_btp_bom_details.sql', 'utf8'));
     database.exec(readFileSync('migrations/0007_project_import_staging.sql', 'utf8'));
     database.exec(readFileSync('migrations/0008_material_notes_and_shipment.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0009_manual_refresh_state.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0010_manual_refresh_queue.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0011_material_cutting_mark.sql', 'utf8'));
+    database.exec(readFileSync('migrations/0012_user_access_email.sql', 'utf8'));
 
     const token = 'isolated-a290-import-test-session';
     const tokenHash = createHash('sha256').update(token).digest('base64');
-    database.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
-      .run('test-admin', 'testadmin', 'unused', 'admin');
+    database.prepare('INSERT INTO users (id, username, password_hash, role, admin_level, can_sync, owner_protected, is_active) VALUES (?, ?, ?, ?, ?, 1, 1, 1)')
+      .run('test-admin', 'testadmin', 'unused', 'admin', 'superadmin');
     database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
       .run(tokenHash, 'test-admin', Math.floor(Date.now() / 1000) + 3600);
     database.prepare('INSERT INTO projects (code, name, source_file, updated_at) VALUES (?, ?, ?, ?)')
@@ -85,7 +89,7 @@ test('A290 staged import keeps existing PL data on commit failure and atomically
     });
     assert.equal(begun.status, 201);
     const session = await begun.json();
-    assert.equal(session.chunk_size, 500);
+    assert.equal(session.chunk_size, 1500);
 
     const earlyCommit = await post(env, token, { action: 'commit', import_id: session.import_id });
     assert.equal(earlyCommit.status, 409);
@@ -229,10 +233,14 @@ test('project data is public while PL file deletion is restricted to admins and 
       'migrations/0006_btp_bom_details.sql',
       'migrations/0007_project_import_staging.sql',
       'migrations/0008_material_notes_and_shipment.sql',
+      'migrations/0009_manual_refresh_state.sql',
+      'migrations/0010_manual_refresh_queue.sql',
+      'migrations/0011_material_cutting_mark.sql',
+      'migrations/0012_user_access_email.sql',
     ]) database.exec(readFileSync(migration, 'utf8'));
 
-    database.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
-      .run('admin-user', 'adminuser', 'unused', 'admin');
+    database.prepare('INSERT INTO users (id, username, password_hash, role, admin_level, can_sync, owner_protected, is_active) VALUES (?, ?, ?, ?, ?, 1, 1, 1)')
+      .run('admin-user', 'adminuser', 'unused', 'admin', 'superadmin');
     database.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
       .run('viewer-user', 'vieweruser', 'unused', 'viewer');
     const adminToken = 'admin-file-delete-test-token';

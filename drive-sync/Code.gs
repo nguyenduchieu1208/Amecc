@@ -19,6 +19,41 @@ const AMECC_SYNCED_PREFIX = 'AMECC_SYNCED_';
 const AMECC_FAILED_PREFIX = 'AMECC_FAILED_';
 const AMECC_TRACKED_PREFIX = 'AMECC_TRACKED_';
 const AMECC_DELETE_PREFIX = 'AMECC_DELETE_';
+const AMECC_MAILER_TOKEN_PROPERTY = 'AMECC_MAILER_TOKEN';
+
+/** Protected mail relay for one-time account codes. Deploy as the script owner. */
+function doPost(e) {
+  try {
+    const payload = JSON.parse(String(e && e.postData && e.postData.contents || '{}'));
+    const expected = String(PropertiesService.getScriptProperties().getProperty(AMECC_MAILER_TOKEN_PROPERTY) || '').trim();
+    const supplied = String(payload.token || '').trim();
+    if (expected.length < 32 || !constantTimeSecretMatch_(expected, supplied)) return mailResponse_({ error:'Unauthorized' }, 401);
+    const recipient = String(payload.to || '').trim();
+    const subject = String(payload.subject || '').trim();
+    const body = String(payload.text || '').trim();
+    const htmlBody = String(payload.html || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient) || subject.length < 1 || subject.length > 180 || body.length < 1 || body.length > 4000 || htmlBody.length > 10000) {
+      return mailResponse_({ error:'Invalid mail payload' }, 400);
+    }
+    MailApp.sendEmail({ to:recipient, subject, body, htmlBody, name:'Hiếu Nguyễn' });
+    return mailResponse_({ sent:true }, 200);
+  } catch (error) {
+    console.error(`AMECC mail relay failed: ${String(error && error.message || error).slice(0, 300)}`);
+    return mailResponse_({ error:'Mail delivery failed' }, 500);
+  }
+}
+
+function constantTimeSecretMatch_(expected, supplied) {
+  if (expected.length !== supplied.length) return false;
+  let mismatch = 0;
+  for (let index = 0; index < expected.length; index += 1) mismatch |= expected.charCodeAt(index) ^ supplied.charCodeAt(index);
+  return mismatch === 0;
+}
+
+function mailResponse_(payload, status) {
+  return ContentService.createTextOutput(JSON.stringify({ ...payload, status }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
 
 /** Run once from the Apps Script editor after setting the Drive and sync token Script Properties. */
 function setupAmeccDriveSync() {

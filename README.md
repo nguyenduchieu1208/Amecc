@@ -29,12 +29,12 @@
 7. Nếu database chưa có admin sau khi khôi phục, khởi tạo admin đúng một lần bằng request HTTPS:
 
    ```powershell
-   $body = @{ setup_key = $env:AMECC_ADMIN_SETUP_KEY; username = "ameccadmin"; password = $env:AMECC_INITIAL_ADMIN_PASSWORD } | ConvertTo-Json
+   $body = @{ setup_key = $env:AMECC_ADMIN_SETUP_KEY; username = "ameccadmin"; email = $env:AMECC_OWNER_EMAIL; password = $env:AMECC_INITIAL_ADMIN_PASSWORD } | ConvertTo-Json
    $headers = @{ apikey = $env:SUPABASE_PUBLISHABLE_KEY }
    Invoke-RestMethod -Uri "https://ymewopsgearpdsvzyaxb.supabase.co/functions/v1/amecc-api/api/auth/setup" -Method Post -Headers $headers -ContentType "application/json" -Body $body
    ```
 
-   Đặt hai biến môi trường thành các giá trị mạnh trước khi chạy; không ghi password hoặc setup key vào file/repository. Nếu chuyển dữ liệu từ bản SQLite, admin hiện có cũng được chuyển nên không cần chạy bước setup. Endpoint setup bị khóa khi đã tồn tại admin. Sau khi tạo admin mới, xóa `ADMIN_SETUP_KEY` khỏi Supabase Function Secrets bằng `npx supabase secrets unset ADMIN_SETUP_KEY`.
+   Đặt các biến môi trường thành giá trị phù hợp trước khi chạy; mật khẩu khởi tạo cần ít nhất 12 ký tự. Email được lưu làm email tài khoản; hệ thống đăng nhập bằng tên đăng nhập hoặc email. Không ghi mật khẩu hoặc setup key vào file/repository. Nếu chuyển dữ liệu từ bản SQLite, admin hiện có cũng được chuyển nên không cần chạy bước setup. Endpoint setup bị khóa khi đã tồn tại admin. Sau khi tạo admin mới, xóa `ADMIN_SETUP_KEY` khỏi Supabase Function Secrets bằng `npx supabase secrets unset ADMIN_SETUP_KEY`.
 
 ## Upload workbook nguồn
 
