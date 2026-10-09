@@ -62,6 +62,7 @@ Run each case at desktop `1440×900` and mobile `390×844` unless a case says ot
 | UI-31 | Data type selector and file chooser | Switch PL/BTP ↔ QLDA; open file chooser; submit without a file | Correct import controls appear; empty submission is blocked |
 | UI-32 | Import/delete confirmation | Import a synthetic workbook; cancel then confirm deleting only its test record | Import progress/result is visible; cancel preserves data; confirm removes test data |
 | UI-33 | Profile form validation | Submit invalid email/code and short password in local-only account | Browser/API validation is clear; no credential is changed by invalid input |
+| UI-34 | Profile access from admin header | At desktop and mobile widths, click the clearly labeled “Hồ sơ & đổi mật khẩu” button | Profile opens with personal email verification and password change forms reachable |
 
 ## Browser run log
 
